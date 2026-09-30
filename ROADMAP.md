@@ -56,5 +56,4 @@ Pin to one performance core. On hybrid CPUs, hyperthread siblings make results n
 - **API:** `BlockEncoder.AppendRepair`, and a `WithMaxOverhead` limit on stored repair symbols.
 - **CI:** the workflows in `.github/workflows` have not run yet. That includes the native arm64 job and the nightly statistics and fuzzing jobs.
 - **Kernel tiers:** SSSE3 for older x86 CPUs without AVX2, and AVX-512.
-- **Tooling:** a Dockerfile for `tools/rqoracle`, so interop tests do not need a local Rust toolchain.
 - **Project:** choose a license; review the RFC 6330 IPR disclosures; report the xssnick P1 deviation upstream (see the README).

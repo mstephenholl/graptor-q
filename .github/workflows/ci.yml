@@ -48,7 +48,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: stable
-      - uses: dtolnay/rust-toolchain@stable
-      - run: make interop
+      # The oracle is built in Docker with a pinned Rust toolchain.
+      - run: make interop ORACLE=docker
       # The committed golden vectors must be exactly what the oracle generates.
-      - run: make oracle-vectors && git diff --exit-code testdata/vectors
+      - run: make oracle-vectors ORACLE=docker && git diff --exit-code testdata/vectors

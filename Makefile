@@ -1,8 +1,19 @@
-RQORACLE := $(CURDIR)/tools/rqoracle/target/release/rqoracle
-VECTORS  := testdata/vectors/cberner-2.0.1/vectors.jsonl.gz
+VECTORS := testdata/vectors/cberner-2.0.1/vectors.jsonl.gz
+
+# The cberner/raptorq oracle is built with the local Rust toolchain by
+# default, or in Docker with ORACLE=docker (for example
+# `make interop ORACLE=docker`), which needs no Rust toolchain.
+ORACLE_IMAGE := graptorq-rqoracle
+ifeq ($(ORACLE),docker)
+RQORACLE      := $(CURDIR)/tools/rqoracle/target/docker/rqoracle
+ORACLE_TARGET := oracle-docker
+else
+RQORACLE      := $(CURDIR)/tools/rqoracle/target/release/rqoracle
+ORACLE_TARGET := oracle
+endif
 
 .PHONY: all test test-short test-purego test-race test-cross vet generate check-generate \
-        oracle oracle-vectors interop bench bench-compare stat-long fuzz
+        oracle oracle-docker oracle-vectors interop bench bench-compare stat-long fuzz
 
 all: vet test
 
@@ -38,24 +49,35 @@ generate:
 check-generate: generate
 	git diff --exit-code internal/rfc/tables_gen.go
 
-# cberner/raptorq 2.0.1 oracle (needs a Rust toolchain).
+# cberner/raptorq 2.0.1 oracle, built with the local Rust toolchain.
 oracle:
 	cd tools/rqoracle && cargo build --release --locked
 
-oracle-vectors: oracle
+# The same oracle built in Docker. The image's binary is statically linked,
+# so it is copied out and run directly: the interop tests call it hundreds of
+# times, which would be slow with a container per call.
+oracle-docker:
+	docker build -t $(ORACLE_IMAGE) tools/rqoracle
+	mkdir -p $(dir $(RQORACLE))
+	id=$$(docker create $(ORACLE_IMAGE)) && \
+		{ docker cp -q $$id:/rqoracle $(RQORACLE); status=$$?; docker rm -f $$id >/dev/null; exit $$status; }
+
+oracle-vectors: $(ORACLE_TARGET)
 	$(RQORACLE) gen-vectors | gzip -9 -n > $(VECTORS)
 
 # Differential tests against xssnick/raptorq and live tests against cberner.
-interop: oracle
+interop: $(ORACLE_TARGET)
 	cd interop && RQORACLE=$(RQORACLE) go test ./...
 
 bench:
 	go test -run xxx -bench . ./internal/gf256/ ./internal/solver/
 
-# Single-core comparison with xssnick (Go) and cberner (Rust) on CPU $(CPU).
+# Single-core comparison with xssnick (Go) and cberner (Rust) on CPU $(CPU),
+# as reported in the README (median of the 5 runs of each benchmark). For
+# cberner, prefer the native build: the Docker one uses musl's allocator.
 CPU ?= 0
-bench-compare: oracle
-	cd interop && taskset -c $(CPU) go test -cpu 1 -run xxx -bench 'Cmp/lib=(graptorq|xssnick)/' -benchtime 10x -count 3 .
+bench-compare: $(ORACLE_TARGET)
+	cd interop && taskset -c $(CPU) go test -cpu 1 -run xxx -bench 'Cmp/lib=(graptorq|xssnick)/' -benchtime 1s -count 5 .
 	taskset -c $(CPU) $(RQORACLE) bench
 
 # RFC 6330 Section 5.8 recovery properties with 1.4 million trials.
