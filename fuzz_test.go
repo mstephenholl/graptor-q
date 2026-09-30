@@ -56,7 +56,7 @@ func FuzzDecoderPackets(f *testing.F) {
 		// random subset of valid packets decodes.
 		for len(garbage) > 0 {
 			n := min(len(garbage), 4+int(garbage[0]%40))
-			dec.AddPacket(garbage[:n])
+			_, _ = dec.AddPacket(garbage[:n]) // errors are expected for garbage
 			garbage = garbage[n:]
 		}
 		dec2, _ := NewDecoder(oti)
@@ -94,8 +94,7 @@ func FuzzBlockRoundTrip(f *testing.F) {
 		esi := uint32(0)
 		for dec.Decode() != nil {
 			if rng.IntN(2) == 0 || int(esi) >= enc.K() {
-				sym, _ := enc.AppendSymbol(nil, esi)
-				dec.AddSymbol(esi, sym)
+				sendSymbol(t, enc, dec, esi)
 			}
 			esi++
 			if dec.Received() > enc.K()+100 {

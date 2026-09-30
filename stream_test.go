@@ -53,6 +53,15 @@ func (f failingReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	return f.r.ReadAt(p, off)
 }
 
+// closeAtEnd closes c when the test ends, reporting a failure to close.
+func closeAtEnd(t *testing.T, c io.Closer) {
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+}
+
 // residentBlocks returns how many blocks the encoder holds.
 func (e *Encoder) residentBlocks() int {
 	e.mu.Lock()
@@ -297,7 +306,7 @@ func TestStreamingMemoryBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer src.Close()
+	closeAtEnd(t, src)
 	for off := 0; off < F; off += chunk {
 		if _, err := src.Write(testutil.PatternData(chunk, uint64(off))); err != nil {
 			t.Fatal(err)
@@ -307,7 +316,7 @@ func TestStreamingMemoryBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dst.Close()
+	closeAtEnd(t, dst)
 
 	oti := OTI{TransferLength: F, SymbolSize: 1024, SourceBlocks: 64, SubBlocks: 1, Alignment: 8}
 	enc, err := NewEncoderReaderAt(src, oti)
@@ -355,8 +364,12 @@ func TestStreamingMemoryBound(t *testing.T) {
 
 	for off := int64(0); off < F; off += chunk {
 		a, b := make([]byte, chunk), make([]byte, chunk)
-		src.ReadAt(a, off)
-		dst.ReadAt(b, off)
+		if _, err := src.ReadAt(a, off); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := dst.ReadAt(b, off); err != nil {
+			t.Fatal(err)
+		}
 		if !bytes.Equal(a, b) {
 			t.Fatalf("output differs at %d", off)
 		}

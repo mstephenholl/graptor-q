@@ -88,20 +88,19 @@ type csr struct {
 	cols  []uint16
 }
 
-var ldpcCache sync.Map // K' -> *csr
+var ldpcCache syncCache[*csr]
 
 // ldpcRows returns the S LDPC rows of p, computed once per K'.
 func ldpcRows(p *rfc.Params) *csr {
-	if v, ok := ldpcCache.Load(p.KPrime); ok {
-		return v.(*csr)
+	if c, ok := ldpcCache.load(p.KPrime); ok {
+		return c
 	}
 	c := &csr{start: []int32{0}}
 	for _, r := range p.LDPCRows() {
 		c.cols = append(c.cols, r...)
 		c.start = append(c.start, int32(len(c.cols)))
 	}
-	v, _ := ldpcCache.LoadOrStore(p.KPrime, c)
-	return v.(*csr)
+	return ldpcCache.loadOrStore(p.KPrime, c)
 }
 
 // baseCache keeps the LT rows of ISIs 0..K'-1 for a few recent K': a

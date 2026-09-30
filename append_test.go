@@ -68,9 +68,12 @@ func TestAppendSymbolsNoAlloc(t *testing.T) {
 	}
 	enc, _ := NewBlockEncoder(make([]byte, 64*1000), 64)
 	buf := make([]byte, 0, 64*16)
-	enc.AppendRepair(buf, 0, 16) // prepares
-	if n := testing.AllocsPerRun(100, func() { enc.AppendSymbols(buf[:0], 990, 16) }); n != 0 {
-		t.Errorf("AppendSymbols allocates %.0f times", n)
+	if _, err := enc.AppendRepair(buf, 0, 16); err != nil { // prepares
+		t.Fatal(err)
+	}
+	var err error
+	if n := testing.AllocsPerRun(100, func() { _, err = enc.AppendSymbols(buf[:0], 990, 16) }); n != 0 || err != nil {
+		t.Errorf("AppendSymbols allocates %.0f times (err %v)", n, err)
 	}
 }
 
@@ -180,8 +183,7 @@ func TestMaxOverheadStuckUntilReset(t *testing.T) {
 	enc, _ := NewBlockEncoder(data, T)
 	dec, _ := NewBlockDecoder(K*T, T, WithMaxOverhead(0))
 	for _, x := range esis {
-		sym, _ := enc.AppendSymbol(nil, x)
-		dec.AddSymbol(x, sym)
+		sendSymbol(t, enc, dec, x)
 	}
 	var de *DecodeError
 	if err := dec.Decode(); !errors.As(err, &de) || de.Received != K {
@@ -196,8 +198,7 @@ func TestMaxOverheadStuckUntilReset(t *testing.T) {
 	}
 	dec.Reset()
 	for esi := uint32(2000); dec.Decode() != nil; esi++ {
-		sym, _ := enc.AppendSymbol(nil, esi)
-		dec.AddSymbol(esi, sym)
+		sendSymbol(t, enc, dec, esi)
 		if esi > 2100 {
 			t.Fatal("no decode after Reset")
 		}
@@ -216,7 +217,9 @@ func TestMaxOverheadObject(t *testing.T) {
 	dec, _ := NewDecoder(oti, WithMaxOverhead(2))
 	dec.SetDeferredDecode(true)
 	for id, sym := range enc.Packets(30) {
-		dec.AddSymbol(id, sym)
+		if _, err := dec.AddSymbol(id, sym); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for sbn := range 3 {
 		b, _ := dec.Block(uint8(sbn))

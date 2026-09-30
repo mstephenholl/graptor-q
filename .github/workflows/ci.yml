@@ -22,6 +22,21 @@ jobs:
       - run: make test-tiers
       - run: make check-generate
 
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      # Install only: `make lint` runs it over every build variant and both
+      # modules, exactly as locally.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.14
+          install-only: true
+      - run: make lint
+
   cross:
     runs-on: ubuntu-latest
     steps:

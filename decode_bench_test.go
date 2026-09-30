@@ -14,7 +14,9 @@ func BenchmarkDecodePaths(b *testing.B) {
 	for _, c := range []struct{ K, T int }{{100, 1280}, {1000, 64}, {1000, 1280}, {10000, 64}, {10000, 1280}, {50000, 256}} {
 		data := testutil.PatternData(c.K*c.T, 1)
 		enc, _ := NewBlockEncoder(data, c.T, WithConcurrency(1))
-		enc.Prepare()
+		if err := enc.Prepare(); err != nil {
+			b.Fatal(err)
+		}
 		for _, m := range []int{1, 4, 16, 50, 100, 200, 400, 800} {
 			if m >= c.K {
 				continue
@@ -40,7 +42,9 @@ func BenchmarkDecodePaths(b *testing.B) {
 					for b.Loop() {
 						d.Reset()
 						for _, s := range syms {
-							d.AddSymbol(s.esi, s.b)
+							if _, err := d.AddSymbol(s.esi, s.b); err != nil {
+								b.Fatal(err)
+							}
 						}
 						if err := d.Decode(); err != nil {
 							b.Fatal(err)

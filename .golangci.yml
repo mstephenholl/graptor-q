@@ -1,0 +1,24 @@
+version: "2"
+
+# Also used by the interop module: see `make lint`.
+
+linters:
+  # The standard set (errcheck, govet, ineffassign, staticcheck, unused),
+  # plus the linters listed under enable.
+  default: standard
+  enable:
+    - govet
+    - staticcheck
+    - unused
+    - errcheck
+    - errorlint
+    - nilerr
+    - forcetypeassert
+    - copyloopvar
+    - durationcheck
+    - reassign
+
+issues:
+  # Report every finding. The defaults hide all but three of each kind.
+  max-same-issues: 0
+  max-issues-per-linter: 0

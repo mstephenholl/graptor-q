@@ -121,8 +121,8 @@ stripes, which adds 40–75% for encode with 4 goroutines at T=1280.
 | `tools/rqoracle` | Rust oracle built on cberner/raptorq 2.0.1: golden vectors, encode/decode for interop, benchmarks. Builds with Cargo or, without a Rust toolchain, with its Dockerfile |
 
 Useful make targets: `make test`, `test-purego`, `test-race`, `test-cross`
-(arm64, s390x, 386), `interop`, `oracle-vectors`, `bench-compare`, `stat-long`,
-and `fuzz`. The targets that need the oracle build it with the local Rust
+(arm64, s390x, 386), `lint` (golangci-lint v2.14), `interop`, `oracle-vectors`,
+`bench-compare`, `stat-long`, and `fuzz`. The targets that need the oracle build it with the local Rust
 toolchain, or in Docker when given `ORACLE=docker` (for example
 `make interop ORACLE=docker`).
 

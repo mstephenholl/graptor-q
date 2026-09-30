@@ -3,7 +3,6 @@ package solver
 import (
 	"encoding/binary"
 	"math/bits"
-	"sync"
 
 	"github.com/mholland/graptorq/internal/gf256"
 	"github.com/mholland/graptorq/internal/rfc"
@@ -316,13 +315,12 @@ func xorWords(dst, src []uint64) {
 
 type mtPairs struct{ r1, r2 []uint8 }
 
-var hdpcPairCache sync.Map // K' -> *mtPairs
+var hdpcPairCache syncCache[*mtPairs]
 
 func hdpcPairs(p *rfc.Params) *mtPairs {
-	if v, ok := hdpcPairCache.Load(p.KPrime); ok {
-		return v.(*mtPairs)
+	if m, ok := hdpcPairCache.load(p.KPrime); ok {
+		return m
 	}
 	r1, r2 := p.HDPCPairs()
-	v, _ := hdpcPairCache.LoadOrStore(p.KPrime, &mtPairs{r1, r2})
-	return v.(*mtPairs)
+	return hdpcPairCache.loadOrStore(p.KPrime, &mtPairs{r1, r2})
 }

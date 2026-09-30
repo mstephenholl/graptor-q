@@ -1,6 +1,7 @@
 package rfc
 
 import (
+	"errors"
 	"math/rand/v2"
 	"os"
 	"slices"
@@ -70,7 +71,7 @@ func TestForK(t *testing.T) {
 			t.Errorf("ForK(%d) = %v, %v; want K'=%d", c.k, p, err, c.want)
 		}
 	}
-	if _, err := ForK(56404); err != ErrTooManySymbols {
+	if _, err := ForK(56404); !errors.Is(err, ErrTooManySymbols) {
 		t.Errorf("ForK(56404) error = %v", err)
 	}
 	if _, err := ForK(0); err == nil {

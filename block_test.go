@@ -12,6 +12,29 @@ import (
 	"github.com/mholland/graptorq/internal/testutil"
 )
 
+// sendSymbol passes the symbol with the given ESI from enc to dec, failing
+// the test on any error. It reports whether dec stored the symbol.
+func sendSymbol(t testing.TB, enc *BlockEncoder, dec *BlockDecoder, esi uint32) bool {
+	t.Helper()
+	sym, err := enc.AppendSymbol(nil, esi)
+	if err != nil {
+		t.Fatalf("AppendSymbol(%d): %v", esi, err)
+	}
+	added, err := dec.AddSymbol(esi, sym)
+	if err != nil {
+		t.Fatalf("AddSymbol(%d): %v", esi, err)
+	}
+	return added
+}
+
+// mustAdd adds a symbol to dec, failing the test on error.
+func mustAdd(t testing.TB, dec *BlockDecoder, esi uint32, sym []byte) {
+	t.Helper()
+	if _, err := dec.AddSymbol(esi, sym); err != nil {
+		t.Fatalf("AddSymbol(%d): %v", esi, err)
+	}
+}
+
 func TestBlockEncoderVectors(t *testing.T) {
 	for _, v := range testutil.BlockVectors() {
 		enc, err := NewBlockEncoder(v.Data, v.SymbolSize)
@@ -62,12 +85,12 @@ func TestBlockDecoderIndependentSymbols(t *testing.T) {
 	dec, _ = NewBlockDecoder(len(data), T)
 	for i := range K {
 		if i != 7 {
-			dec.AddSymbol(uint32(i), data[i*T:(i+1)*T])
+			mustAdd(t, dec, uint32(i), data[i*T:(i+1)*T])
 		}
 	}
 	for i, h := range testutil.TransitionRepairs {
 		b, _ := hex.DecodeString(h)
-		dec.AddSymbol(uint32(K+i), b)
+		mustAdd(t, dec, uint32(K+i), b)
 	}
 	if err := dec.Decode(); err != nil {
 		t.Fatal(err)
@@ -111,14 +134,12 @@ func TestBlockRoundTrip(t *testing.T) {
 		loss := rng.Float64()
 		for i := range K {
 			if rng.Float64() >= loss {
-				sym, _ := enc.AppendSymbol(nil, uint32(i))
-				dec.AddSymbol(uint32(i), sym)
+				sendSymbol(t, enc, dec, uint32(i))
 			}
 		}
 		esi := uint32(K + rng.IntN(1000))
 		for dec.Received() < K {
-			sym, _ := enc.AppendSymbol(nil, esi)
-			dec.AddSymbol(esi, sym)
+			sendSymbol(t, enc, dec, esi)
 			esi += 1 + uint32(rng.IntN(3))
 		}
 		attempts := 0
@@ -136,8 +157,7 @@ func TestBlockRoundTrip(t *testing.T) {
 			if attempts++; attempts > 10 {
 				t.Fatalf("K=%d: still failing after %d extra symbols", K, attempts)
 			}
-			sym, _ := enc.AppendSymbol(nil, esi)
-			dec.AddSymbol(esi, sym)
+			sendSymbol(t, enc, dec, esi)
 			esi++
 		}
 		got, err := dec.AppendSource(nil)
@@ -194,8 +214,7 @@ func TestBlockDecoderReset(t *testing.T) {
 	for round := range 3 {
 		dec.Reset()
 		for esi := uint32(round); dec.Received() < enc.K()+2; esi += 2 {
-			sym, _ := enc.AppendSymbol(nil, esi)
-			dec.AddSymbol(esi, sym)
+			sendSymbol(t, enc, dec, esi)
 		}
 		if err := dec.Decode(); err != nil {
 			t.Fatal(err)
@@ -242,8 +261,9 @@ func TestAppendSymbolNoAlloc(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, esi := range []uint32{3, 1000, 123456} {
-		if n := testing.AllocsPerRun(100, func() { enc.AppendSymbol(buf[:0], esi) }); n != 0 {
-			t.Errorf("AppendSymbol(ESI %d) allocates %.0f times", esi, n)
+		var err error
+		if n := testing.AllocsPerRun(100, func() { _, err = enc.AppendSymbol(buf[:0], esi) }); n != 0 || err != nil {
+			t.Errorf("AppendSymbol(ESI %d) allocates %.0f times (err %v)", esi, n, err)
 		}
 	}
 }
@@ -303,8 +323,7 @@ func TestLowLossPathEquivalence(t *testing.T) {
 		var isis []uint32
 		for i := range K {
 			if !isLost[i] {
-				sym, _ := enc.AppendSymbol(nil, uint32(i))
-				dec.AddSymbol(uint32(i), sym)
+				sendSymbol(t, enc, dec, uint32(i))
 				isis = append(isis, uint32(i))
 			}
 		}
@@ -354,13 +373,11 @@ func TestDecodePathsAgree(t *testing.T) {
 			loss := rng.Float64() * 0.2
 			for i := range K {
 				if rng.Float64() >= loss {
-					sym, _ := enc.AppendSymbol(nil, uint32(i))
-					dec.AddSymbol(uint32(i), sym)
+					sendSymbol(t, enc, dec, uint32(i))
 				}
 			}
 			for esi := uint32(K); dec.Decode() != nil; esi++ {
-				sym, _ := enc.AppendSymbol(nil, esi)
-				dec.AddSymbol(esi, sym)
+				sendSymbol(t, enc, dec, esi)
 			}
 			if got, _ := dec.AppendSource(nil); !bytes.Equal(got, data) {
 				t.Fatalf("mode %d trial %d: wrong data", mode, trial)
@@ -406,7 +423,10 @@ func TestDecodeNoAlloc(t *testing.T) {
 			run := func() {
 				dec.Reset()
 				for i, s := range syms {
-					dec.AddSymbol(esis[i], s)
+					if _, e := dec.AddSymbol(esis[i], s); e != nil {
+						err = e
+						return
+					}
 				}
 				err = dec.Decode()
 			}

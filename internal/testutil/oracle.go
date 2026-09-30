@@ -47,7 +47,7 @@ func LoadOracleVectors(path string) ([]OracleVector, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only: closing cannot lose data
 	zr, err := gzip.NewReader(f)
 	if err != nil {
 		return nil, err

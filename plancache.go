@@ -1,7 +1,6 @@
 package graptorq
 
 import (
-	"container/list"
 	"sync"
 
 	"github.com/mholland/graptorq/internal/rfc"
@@ -20,16 +19,19 @@ type PlanCache struct {
 	maxBytes int64
 	bytes    int64
 	entries  map[int]*planEntry
-	lru      list.List // of *planEntry, most recently used first
+	// The computed plans, most recently used first, linked through
+	// planEntry.prev and next.
+	front, back *planEntry
 }
 
 type planEntry struct {
-	kPrime int
-	once   sync.Once
-	plan   *solver.Plan
-	err    error
-	size   int64
-	elem   *list.Element // nil until the plan is computed
+	kPrime     int
+	once       sync.Once
+	plan       *solver.Plan
+	err        error
+	size       int64
+	listed     bool       // in the LRU list: false until the plan is computed
+	prev, next *planEntry // LRU neighbours, more and less recently used
 }
 
 // NewPlanCache returns a cache that keeps plans up to a total of maxBytes
@@ -48,8 +50,9 @@ func (c *PlanCache) plan(p *rfc.Params) (*solver.Plan, error) {
 	if !ok {
 		e = &planEntry{kPrime: p.KPrime}
 		c.entries[p.KPrime] = e
-	} else if e.elem != nil {
-		c.lru.MoveToFront(e.elem)
+	} else if e.listed && c.front != e {
+		c.unlink(e)
+		c.pushFront(e)
 	}
 	c.mu.Unlock()
 
@@ -62,15 +65,42 @@ func (c *PlanCache) plan(p *rfc.Params) (*solver.Plan, error) {
 			return
 		}
 		e.size = int64(e.plan.Size())
-		e.elem = c.lru.PushFront(e)
+		c.pushFront(e)
 		c.bytes += e.size
-		for c.bytes > c.maxBytes && c.lru.Len() > 1 {
-			old := c.lru.Remove(c.lru.Back()).(*planEntry)
+		for c.bytes > c.maxBytes && c.back != c.front {
+			old := c.back
+			c.unlink(old)
 			delete(c.entries, old.kPrime)
 			c.bytes -= old.size
 		}
 	})
 	return e.plan, e.err
+}
+
+// pushFront inserts e at the front of the LRU list. c.mu must be held.
+func (c *PlanCache) pushFront(e *planEntry) {
+	e.prev, e.next, e.listed = nil, c.front, true
+	if c.front != nil {
+		c.front.prev = e
+	} else {
+		c.back = e
+	}
+	c.front = e
+}
+
+// unlink removes e from the LRU list. c.mu must be held.
+func (c *PlanCache) unlink(e *planEntry) {
+	if e.prev != nil {
+		e.prev.next = e.next
+	} else {
+		c.front = e.next
+	}
+	if e.next != nil {
+		e.next.prev = e.prev
+	} else {
+		c.back = e.prev
+	}
+	e.prev, e.next, e.listed = nil, nil, false
 }
 
 func seqISIs(n int) []uint32 {

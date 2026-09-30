@@ -60,15 +60,25 @@ func Example() {
 // a time from the source file, and the decoder writes each block to the
 // destination file as soon as it is decoded.
 func ExampleNewDecoderWriterAt() {
-	dir, _ := os.MkdirTemp("", "graptorq")
-	defer os.RemoveAll(dir)
+	dir, err := os.MkdirTemp("", "graptorq")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
 	object := bytes.Repeat([]byte("a large object, one block at a time. "), 30000)
-	os.WriteFile(filepath.Join(dir, "in"), object, 0o600)
+	if err := os.WriteFile(filepath.Join(dir, "in"), object, 0o600); err != nil {
+		log.Fatal(err)
+	}
 
-	in, _ := os.Open(filepath.Join(dir, "in"))
-	defer in.Close()
-	out, _ := os.Create(filepath.Join(dir, "out"))
-	defer out.Close()
+	in, err := os.Open(filepath.Join(dir, "in"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() { _ = in.Close() }() // read-only: closing cannot lose data
+	out, err := os.Create(filepath.Join(dir, "out"))
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Eight source blocks: only one at a time is held in memory on each side.
 	oti := graptorq.OTI{TransferLength: uint64(len(object)), SymbolSize: 1024, SourceBlocks: 8, SubBlocks: 1, Alignment: 4}
@@ -89,6 +99,9 @@ func ExampleNewDecoderWriterAt() {
 		}
 	}
 	if err := enc.Err(); err != nil {
+		log.Fatal(err)
+	}
+	if err := out.Close(); err != nil { // a failed close can lose written data
 		log.Fatal(err)
 	}
 	got, _ := os.ReadFile(filepath.Join(dir, "out"))
@@ -116,7 +129,9 @@ func ExampleBlockEncoder() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		dec.AddSymbol(esi, symbol)
+		if _, err := dec.AddSymbol(esi, symbol); err != nil {
+			log.Fatal(err)
+		}
 	}
 	got, _ := dec.AppendSource(nil)
 	fmt.Printf("K=%d K'=%d received=%d\n%s\n", enc.K(), enc.KPrime(), dec.Received(), got)

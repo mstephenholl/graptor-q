@@ -135,7 +135,7 @@ func numberList(lines []string, prefix string) ([]uint64, error) {
 			}
 			n, err := strconv.ParseUint(f, 10, 64)
 			if err != nil {
-				return nil, fmt.Errorf("rfctext: section %s: %v", prefix, err)
+				return nil, fmt.Errorf("rfctext: section %s: %w", prefix, err)
 			}
 			out = append(out, n)
 		}

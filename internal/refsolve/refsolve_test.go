@@ -3,6 +3,7 @@ package refsolve
 import (
 	"bytes"
 	"encoding/hex"
+	"errors"
 	"math/rand/v2"
 	"testing"
 
@@ -107,7 +108,7 @@ func TestSingular(t *testing.T) {
 	for i := range D {
 		D[i] = []byte{0}
 	}
-	if _, err := Solve(A, D); err != ErrSingular {
+	if _, err := Solve(A, D); !errors.Is(err, ErrSingular) {
 		t.Fatalf("err = %v, want ErrSingular", err)
 	}
 }

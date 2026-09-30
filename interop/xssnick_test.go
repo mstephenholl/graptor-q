@@ -113,11 +113,15 @@ func TestXssnickCrossDecode(t *testing.T) {
 		esi := uint32(0)
 		for ; esi < uint32(K); esi++ {
 			if rng.Float64() >= loss {
-				gd.AddSymbol(esi, xe.GenSymbol(esi))
+				if _, err := gd.AddSymbol(esi, xe.GenSymbol(esi)); err != nil {
+					t.Fatal(err)
+				}
 			}
 		}
 		for gd.Received() < K+2 {
-			gd.AddSymbol(esi, xe.GenSymbol(esi))
+			if _, err := gd.AddSymbol(esi, xe.GenSymbol(esi)); err != nil {
+				t.Fatal(err)
+			}
 			esi++
 		}
 		if err := gd.Decode(); err != nil {
@@ -137,7 +141,9 @@ func TestXssnickCrossDecode(t *testing.T) {
 		for esi = 0; esi < uint32(K); esi++ {
 			if rng.Float64() >= loss {
 				sym, _ := ge.AppendSymbol(nil, esi)
-				xd.AddSymbol(esi, sym)
+				if _, err := xd.AddSymbol(esi, sym); err != nil {
+					t.Fatal(err)
+				}
 				received++
 			}
 		}
@@ -220,7 +226,9 @@ func BenchmarkCmp(b *testing.B) {
 				for b.Loop() {
 					d.Reset()
 					for _, s := range syms {
-						d.AddSymbol(s.esi, s.data)
+						if _, err := d.AddSymbol(s.esi, s.data); err != nil {
+							b.Fatal(err)
+						}
 					}
 					if err := d.Decode(); err != nil {
 						b.Fatal(err)
@@ -236,7 +244,9 @@ func BenchmarkCmp(b *testing.B) {
 			for b.Loop() {
 				d.Reset()
 				for _, s := range syms {
-					d.AddSymbol(s.esi, s.data)
+					if _, err := d.AddSymbol(s.esi, s.data); err != nil {
+						b.Fatal(err)
+					}
 				}
 				if ok, err := d.DecodeInto(out); !ok || err != nil {
 					b.Fatal("xssnick decode failed", err)

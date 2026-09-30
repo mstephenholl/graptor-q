@@ -12,7 +12,7 @@ RQORACLE      := $(CURDIR)/tools/rqoracle/target/release/rqoracle
 ORACLE_TARGET := oracle
 endif
 
-.PHONY: all test test-short test-purego test-race test-cross vet generate check-generate \
+.PHONY: all test test-short test-purego test-race test-cross vet lint generate check-generate \
         test-tiers oracle oracle-docker oracle-vectors interop bench bench-compare stat-long fuzz
 
 all: vet test
@@ -47,6 +47,14 @@ vet:
 	GOARCH=arm64 go vet ./...
 	go vet -tags purego ./...
 	cd interop && go vet ./...
+
+# golangci-lint v2.14 (the version CI pins), over the same build variants as
+# vet: lint only sees the files selected by the build constraints.
+lint:
+	golangci-lint run ./...
+	GOARCH=arm64 golangci-lint run ./...
+	golangci-lint run --build-tags purego ./...
+	cd interop && golangci-lint run --config ../.golangci.yml ./...
 
 # Regenerate internal/rfc/tables_gen.go from the RFC text.
 generate:

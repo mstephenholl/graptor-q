@@ -132,10 +132,10 @@ func (ph *phase1) run(rs *rowSet) {
 		}
 
 		var row int32
-		switch r := ph.minR; {
-		case r == 1:
+		switch r := ph.minR; r {
+		case 1:
 			row = ph.top(1)
-		case r == 2:
+		case 2:
 			row = ph.componentRow()
 		default:
 			row = ph.minDegreeRow(r)
