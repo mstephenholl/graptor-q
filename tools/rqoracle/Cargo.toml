@@ -1,0 +1,13 @@
+[package]
+name = "rqoracle"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Generates RFC 6330 test vectors and interop data with cberner/raptorq for graptorq"
+
+[dependencies]
+# Must be >= 2.0.0: earlier versions put ISIs in the PayloadId (cberner/raptorq#164).
+raptorq = "=2.0.1"
+
+[profile.release]
+debug = false

@@ -1,0 +1,271 @@
+package graptorq
+
+import (
+	"bytes"
+	"encoding/hex"
+	"errors"
+	"math/rand/v2"
+	"sync"
+	"testing"
+
+	"github.com/mholland/graptorq/internal/testutil"
+)
+
+func TestBlockEncoderVectors(t *testing.T) {
+	for _, v := range testutil.BlockVectors() {
+		enc, err := NewBlockEncoder(v.Data, v.SymbolSize)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range v.Symbols {
+			var got []byte
+			if s.ESI > MaxESI { // xssnick's vector uses a 32-bit ID
+				got, err = enc.appendISI(nil, s.ESI+uint32(enc.KPrime()-enc.K()))
+			} else {
+				got, err = enc.AppendSymbol(nil, s.ESI)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if hex.EncodeToString(got) != s.Hex {
+				t.Errorf("%s K=%d ESI=%d: got %x, want %s", v.Name, enc.K(), s.ESI, got, s.Hex)
+			}
+		}
+	}
+}
+
+// Decode symbols produced by cberner/raptorq: the "hello" block from its two
+// repair symbols alone, and a K=50 block with one source symbol replaced by
+// eight repair symbols.
+func TestBlockDecoderIndependentSymbols(t *testing.T) {
+	hello := testutil.BlockVectors()[1]
+	dec, err := NewBlockDecoder(len(hello.Data), hello.SymbolSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range hello.Symbols[:2] {
+		b, _ := hex.DecodeString(s.Hex)
+		if _, err := dec.AddSymbol(s.ESI, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := dec.Decode(); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := dec.AppendSource(nil); !bytes.Equal(got, hello.Data) {
+		t.Fatalf("decoded %q", got)
+	}
+
+	const K, T = 50, 8
+	data := testutil.VectorData(K * T)
+	dec, _ = NewBlockDecoder(len(data), T)
+	for i := range K {
+		if i != 7 {
+			dec.AddSymbol(uint32(i), data[i*T:(i+1)*T])
+		}
+	}
+	for i, h := range testutil.TransitionRepairs {
+		b, _ := hex.DecodeString(h)
+		dec.AddSymbol(uint32(K+i), b)
+	}
+	if err := dec.Decode(); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := dec.AppendSource(nil); !bytes.Equal(got, data) {
+		t.Fatal("K=50 block decoded incorrectly")
+	}
+}
+
+func TestBlockRoundTrip(t *testing.T) {
+	rng := rand.New(rand.NewPCG(11, 12))
+	trials := 300
+	if testing.Short() {
+		trials = 60
+	}
+	failuresAtK := 0
+	for trial := range trials {
+		T := 1 + rng.IntN(64)
+		K := 1 + rng.IntN(300)
+		if trial%10 == 0 {
+			K = 1 + rng.IntN(3000)
+		}
+		length := (K-1)*T + 1 + rng.IntN(T)
+		data := make([]byte, length)
+		for i := range data {
+			data[i] = byte(rng.Uint32())
+		}
+		enc, err := NewBlockEncoder(data, T)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if enc.K() != K {
+			t.Fatalf("K = %d, want %d", enc.K(), K)
+		}
+		dec, err := NewBlockDecoder(length, T)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Drop each source symbol with probability loss, then add repair
+		// symbols (with random gaps) until decoding succeeds.
+		loss := rng.Float64()
+		for i := range K {
+			if rng.Float64() >= loss {
+				sym, _ := enc.AppendSymbol(nil, uint32(i))
+				dec.AddSymbol(uint32(i), sym)
+			}
+		}
+		esi := uint32(K + rng.IntN(1000))
+		for dec.Received() < K {
+			sym, _ := enc.AppendSymbol(nil, esi)
+			dec.AddSymbol(esi, sym)
+			esi += 1 + uint32(rng.IntN(3))
+		}
+		attempts := 0
+		for {
+			err := dec.Decode()
+			if err == nil {
+				break
+			}
+			if !errors.Is(err, ErrInsufficientSymbols) {
+				t.Fatal(err)
+			}
+			if attempts == 0 {
+				failuresAtK++
+			}
+			if attempts++; attempts > 10 {
+				t.Fatalf("K=%d: still failing after %d extra symbols", K, attempts)
+			}
+			sym, _ := enc.AppendSymbol(nil, esi)
+			dec.AddSymbol(esi, sym)
+			esi++
+		}
+		got, err := dec.AppendSource(nil)
+		if err != nil || !bytes.Equal(got, data) {
+			t.Fatalf("trial %d K=%d T=%d: round trip mismatch (%v)", trial, K, T, err)
+		}
+	}
+	// RFC 6330 promises < 1% failure with K symbols; allow statistical slack.
+	if failuresAtK > trials/20 {
+		t.Errorf("%d/%d decodes needed more than K symbols", failuresAtK, trials)
+	}
+}
+
+func TestBlockErrors(t *testing.T) {
+	if _, err := NewBlockEncoder(nil, 8); !errors.Is(err, ErrInvalidParameters) {
+		t.Errorf("empty block: %v", err)
+	}
+	if _, err := NewBlockEncoder(make([]byte, 10), 0); !errors.Is(err, ErrInvalidParameters) {
+		t.Errorf("zero symbol size: %v", err)
+	}
+	if _, err := NewBlockEncoder(make([]byte, MaxSourceSymbols+1), 1); !errors.Is(err, ErrInvalidParameters) {
+		t.Errorf("too many symbols: %v", err)
+	}
+	if _, err := NewBlockEncoder(make([]byte, 1000), 10, WithMaxMemory(1000)); !errors.Is(err, ErrMemoryLimit) {
+		t.Errorf("memory limit: %v", err)
+	}
+	enc, _ := NewBlockEncoder(make([]byte, 100), 10)
+	if _, err := enc.AppendSymbol(nil, MaxESI+1); !errors.Is(err, ErrESIRange) {
+		t.Errorf("ESI range: %v", err)
+	}
+	dec, _ := NewBlockDecoder(100, 10)
+	if _, err := dec.AddSymbol(0, make([]byte, 9)); !errors.Is(err, ErrSymbolSize) {
+		t.Errorf("symbol size: %v", err)
+	}
+	var de *DecodeError
+	if err := dec.Decode(); !errors.As(err, &de) || de.Needed != 10 || !errors.Is(err, ErrInsufficientSymbols) {
+		t.Errorf("decode with no symbols: %v", err)
+	}
+	if _, err := dec.AppendSource(nil); !errors.Is(err, ErrNotDecoded) {
+		t.Errorf("AppendSource before decode: %v", err)
+	}
+	if added, _ := dec.AddSymbol(3, make([]byte, 10)); !added {
+		t.Error("first symbol not added")
+	}
+	if added, _ := dec.AddSymbol(3, make([]byte, 10)); added {
+		t.Error("duplicate symbol added")
+	}
+}
+
+func TestBlockDecoderReset(t *testing.T) {
+	data := testutil.VectorData(1000)
+	enc, _ := NewBlockEncoder(data, 16)
+	dec, _ := NewBlockDecoder(len(data), 16)
+	for round := range 3 {
+		dec.Reset()
+		for esi := uint32(round); dec.Received() < enc.K()+2; esi += 2 {
+			sym, _ := enc.AppendSymbol(nil, esi)
+			dec.AddSymbol(esi, sym)
+		}
+		if err := dec.Decode(); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := dec.AppendSource(nil); !bytes.Equal(got, data) {
+			t.Fatalf("round %d: mismatch", round)
+		}
+	}
+}
+
+// Encoders sharing a cache from many goroutines (run with -race).
+func TestPlanCacheConcurrent(t *testing.T) {
+	cache := NewPlanCache(1 << 20) // small: forces evictions
+	var wg sync.WaitGroup
+	for g := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range 20 {
+				k := 1 + (g*37+i*101)%400
+				data := testutil.VectorData(k * 4)
+				enc, err := NewBlockEncoder(data, 4, WithPlanCache(cache))
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				ref, _ := NewBlockEncoder(data, 4, WithoutPlanCache())
+				a, _ := enc.AppendSymbol(nil, uint32(k+5))
+				b, _ := ref.AppendSymbol(nil, uint32(k+5))
+				if !bytes.Equal(a, b) {
+					t.Error("cached plan gives a different symbol")
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestAppendSymbolNoAlloc(t *testing.T) {
+	data := testutil.VectorData(64 * 1000)
+	enc, _ := NewBlockEncoder(data, 64)
+	buf := make([]byte, 0, 64)
+	if _, err := enc.AppendSymbol(buf, 5000); err != nil { // prepares
+		t.Fatal(err)
+	}
+	for _, esi := range []uint32{3, 1000, 123456} {
+		if n := testing.AllocsPerRun(100, func() { enc.AppendSymbol(buf[:0], esi) }); n != 0 {
+			t.Errorf("AppendSymbol(ESI %d) allocates %.0f times", esi, n)
+		}
+	}
+}
+
+// A decoder with a memory limit must refuse symbols beyond it rather than
+// grow without bound (e.g. a flood of distinct repair ESIs).
+func TestDecoderMemoryLimit(t *testing.T) {
+	const K, T = 100, 64
+	limit := int64(128+K+20) * T // about the working memory plus K+20 symbols
+	dec, err := NewBlockDecoder(K*T, T, WithMaxMemory(limit))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sym := make([]byte, T)
+	var err2 error
+	accepted := 0
+	for esi := uint32(K); esi < K+1000; esi++ {
+		if _, err2 = dec.AddSymbol(esi, sym); err2 != nil {
+			break
+		}
+		accepted++
+	}
+	if !errors.Is(err2, ErrMemoryLimit) || accepted > K+20 {
+		t.Fatalf("accepted %d symbols, last error %v", accepted, err2)
+	}
+}

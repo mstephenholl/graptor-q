@@ -1,0 +1,70 @@
+RQORACLE := $(CURDIR)/tools/rqoracle/target/release/rqoracle
+VECTORS  := testdata/vectors/cberner-2.0.1/vectors.jsonl.gz
+
+.PHONY: all test test-short test-purego test-race test-cross vet generate check-generate \
+        oracle oracle-vectors interop bench bench-compare stat-long fuzz
+
+all: vet test
+
+test:
+	go test ./...
+
+test-short:
+	go test -short ./...
+
+# The portable Go kernels only.
+test-purego:
+	go test -tags purego ./...
+
+test-race:
+	go test -race -short ./...
+
+# arm64 (NEON kernels) and s390x (big-endian) under qemu-user, plus 32-bit x86.
+test-cross:
+	GOARCH=arm64 go test -short -exec qemu-aarch64-static ./...
+	GOARCH=s390x go test -short -exec qemu-s390x-static ./...
+	GOARCH=386 go test -short ./...
+
+vet:
+	go vet ./...
+	GOARCH=arm64 go vet ./...
+	go vet -tags purego ./...
+	cd interop && go vet ./...
+
+# Regenerate internal/rfc/tables_gen.go from the RFC text.
+generate:
+	cd internal/rfc && go generate
+
+check-generate: generate
+	git diff --exit-code internal/rfc/tables_gen.go
+
+# cberner/raptorq 2.0.1 oracle (needs a Rust toolchain).
+oracle:
+	cd tools/rqoracle && cargo build --release --locked
+
+oracle-vectors: oracle
+	$(RQORACLE) gen-vectors | gzip -9 -n > $(VECTORS)
+
+# Differential tests against xssnick/raptorq and live tests against cberner.
+interop: oracle
+	cd interop && RQORACLE=$(RQORACLE) go test ./...
+
+bench:
+	go test -run xxx -bench . ./internal/gf256/ ./internal/solver/
+
+# Single-core comparison with xssnick (Go) and cberner (Rust) on CPU $(CPU).
+CPU ?= 0
+bench-compare: oracle
+	cd interop && taskset -c $(CPU) go test -cpu 1 -run xxx -bench 'Cmp/lib=(graptorq|xssnick)/' -benchtime 10x -count 3 .
+	taskset -c $(CPU) $(RQORACLE) bench
+
+# RFC 6330 Section 5.8 recovery properties with 1.4 million trials.
+stat-long:
+	GRAPTORQ_LONG=1 go test -timeout 3h -run RecoveryProperties -v ./internal/solver/
+
+FUZZTIME ?= 30s
+fuzz:
+	go test -run xxx -fuzz '^FuzzParseOTI$$' -fuzztime $(FUZZTIME) .
+	go test -run xxx -fuzz '^FuzzDecoderPackets$$' -fuzztime $(FUZZTIME) .
+	go test -run xxx -fuzz '^FuzzBlockRoundTrip$$' -fuzztime $(FUZZTIME) .
+	go test -run xxx -fuzz '^FuzzMulAdd$$' -fuzztime $(FUZZTIME) ./internal/gf256/
