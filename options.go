@@ -10,6 +10,7 @@ type options struct {
 	planCache   *PlanCache
 	noPlanCache bool
 	maxMemory   int64
+	blockCache  int // 0: default, > 0: limit, < 0: unlimited
 }
 
 func buildOptions(opts []Option) options {
@@ -40,6 +41,20 @@ func WithPlanCache(c *PlanCache) Option {
 // WithoutPlanCache disables plan caching: every encoder computes its plan.
 func WithoutPlanCache() Option {
 	return func(o *options) { o.planCache, o.noPlanCache = nil, true }
+}
+
+// WithBlockCache limits how many source blocks an Encoder keeps ready (read
+// and prepared) at once; the least recently used block is dropped when the
+// limit is exceeded, and read and prepared again if it is needed later.
+// n <= 0 means no limit. The default is 1 for NewEncoderReaderAt, which
+// suits sending an object block after block, and no limit for NewEncoder.
+func WithBlockCache(n int) Option {
+	return func(o *options) {
+		o.blockCache = n
+		if n <= 0 {
+			o.blockCache = -1
+		}
+	}
 }
 
 // WithMaxMemory limits the working memory of a single source block (roughly

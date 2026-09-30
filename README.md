@@ -23,6 +23,7 @@ object, err = dec.AppendObject(nil)
   - Source block and sub-block partitioning with symbol alignment and sub-symbol interleaving (§4.4).
   - The §4.3 parameter derivation.
   - Any K up to 56,403 per block, any ESI up to 2²⁴−1.
+- **Streaming for objects larger than memory.** `NewEncoderReaderAt` reads source blocks from an `io.ReaderAt` on demand; `WithBlockCache` bounds how many stay ready. `NewDecoderWriterAt` writes each block to an `io.WriterAt` as soon as it decodes, then frees its memory. `*os.File` works for both. Streaming a 64 MB file this way grows the heap by about 1.5 MB.
 - **Block-level API.** `BlockEncoder` and `BlockDecoder` work on a single source block with any symbol size.
 - **Fast solver.**
   - Inactivation decoding is compiled into a straight-line *plan* of symbol operations.

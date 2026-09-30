@@ -21,23 +21,37 @@ type BlockDecoder struct {
 	arena   []byte  // received symbol data
 	srcOff  []int32 // per source ESI: offset in arena, -1 if missing, -2-k if recovered as rec symbol k
 	nsrc    int     // received source symbols
+	nrep    int     // received repair symbols (kept when the block is released)
 	repESI  []uint32
 	repOff  []int32
 	seenRep map[uint32]struct{}
 
-	decoded bool
-	rec     []byte // source symbols recovered by Decode (the output is gathered from arena and rec)
+	decoded  bool
+	released bool   // the data was written out and the memory released
+	rec      []byte // source symbols recovered by Decode (the output is gathered from arena and rec)
 
 	// Memory reused by every decode, so that decoding after Reset does not
 	// allocate.
 	work []byte // intermediate symbols
 	ws   solver.Workspace
-	scr  struct {
-		isis, want, missing []uint32
-		in                  [][]byte
-		units, ck, buf      []byte
-		rows, rhs           [][]byte
-	}
+	scr  decodeScratch
+}
+
+type decodeScratch struct {
+	isis, want, missing []uint32
+	in                  [][]byte
+	units, ck, buf      []byte
+	rows, rhs           [][]byte
+}
+
+// release frees the memory of a decoded block whose data has been written
+// out. It stays decoded (later symbols are ignored) until Reset.
+func (d *BlockDecoder) release() {
+	d.arena, d.rec, d.work = nil, nil, nil
+	d.repESI, d.repOff, d.seenRep = nil, nil, nil
+	d.ws = solver.Workspace{}
+	d.scr = decodeScratch{}
+	d.released = true
 }
 
 // resize returns s with length n, reusing its memory when it is large
@@ -83,7 +97,7 @@ func (d *BlockDecoder) K() int { return d.k }
 func (d *BlockDecoder) SymbolSize() int { return d.t }
 
 // Received returns the number of distinct encoding symbols added.
-func (d *BlockDecoder) Received() int { return d.nsrc + len(d.repESI) }
+func (d *BlockDecoder) Received() int { return d.nsrc + d.nrep }
 
 // Decoded reports whether the block has been decoded.
 func (d *BlockDecoder) Decoded() bool { return d.decoded }
@@ -95,11 +109,11 @@ func (d *BlockDecoder) Reset() {
 		d.srcOff[i] = -1
 	}
 	d.arena = d.arena[:0]
-	d.nsrc = 0
+	d.nsrc, d.nrep = 0, 0
 	d.repESI = d.repESI[:0]
 	d.repOff = d.repOff[:0]
 	clear(d.seenRep)
-	d.decoded = false
+	d.decoded, d.released = false, false
 	d.rec = d.rec[:0]
 }
 
@@ -136,6 +150,7 @@ func (d *BlockDecoder) AddSymbol(esi uint32, sym []byte) (added bool, err error)
 		}
 		d.seenRep[esi] = struct{}{}
 		d.repESI = append(d.repESI, esi)
+		d.nrep++
 		d.repOff = append(d.repOff, off)
 	}
 	d.arena = append(d.arena, sym...)
@@ -337,7 +352,10 @@ func (d *BlockDecoder) decodeLowLoss() bool {
 
 // AppendSource appends the decoded block (length bytes) to dst.
 func (d *BlockDecoder) AppendSource(dst []byte) ([]byte, error) {
-	if !d.decoded {
+	switch {
+	case d.released:
+		return dst, ErrStreamed
+	case !d.decoded:
 		return dst, ErrNotDecoded
 	}
 	n := len(dst)

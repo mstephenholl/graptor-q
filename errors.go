@@ -24,6 +24,9 @@ var (
 	// ErrMemoryLimit is returned when a block would need more working
 	// memory than allowed by WithMaxMemory.
 	ErrMemoryLimit = errors.New("graptorq: memory limit exceeded")
+	// ErrStreamed is returned when reading decoded data that has already
+	// been written to the io.WriterAt of NewDecoderWriterAt and released.
+	ErrStreamed = errors.New("graptorq: decoded data was written out and released")
 	// ErrNotDecoded is returned when reading data that is not decoded yet.
 	ErrNotDecoded = errors.New("graptorq: not decoded")
 )

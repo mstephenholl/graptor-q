@@ -3,6 +3,7 @@ package graptorq
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 )
 
@@ -16,12 +17,15 @@ type Decoder struct {
 	eager  bool
 
 	blocks  []*BlockDecoder
-	pending int // blocks not decoded yet
+	pending int // blocks not complete: not decoded, or (with w) not written yet
+
+	w       io.WriterAt // NewDecoderWriterAt: where decoded blocks are written
+	written []bool      // per block, with w: written out and released
 }
 
-// NewDecoder returns a decoder for the object described by oti. Unless
-// WithDeferredDecode is given, each source block is decoded as soon as
-// enough symbols for it have arrived.
+// NewDecoder returns a decoder for the object described by oti, which keeps
+// the decoded object in memory. Unless SetDeferredDecode(true) is called,
+// each source block is decoded as soon as enough symbols for it arrive.
 func NewDecoder(oti OTI, opts ...Option) (*Decoder, error) {
 	l, err := oti.Layout()
 	if err != nil {
@@ -30,6 +34,23 @@ func NewDecoder(oti OTI, opts ...Option) (*Decoder, error) {
 	d := &Decoder{oti: oti, layout: l, o: buildOptions(opts), eager: true}
 	d.blocks = make([]*BlockDecoder, l.SourceBlocks())
 	d.pending = len(d.blocks)
+	return d, nil
+}
+
+// NewDecoderWriterAt returns a decoder that writes each source block to w,
+// at its offset in the object, as soon as it is decoded, and then releases
+// the block's memory, so that objects larger than memory can be decoded:
+// only the blocks still being received are held. Decoded reports when the
+// whole object has been written; AppendObject and WriteTo return
+// ErrStreamed. If writing a block fails, the error is returned and the block
+// is kept; Decode retries writing it.
+func NewDecoderWriterAt(w io.WriterAt, oti OTI, opts ...Option) (*Decoder, error) {
+	d, err := NewDecoder(oti, opts...)
+	if err != nil {
+		return nil, err
+	}
+	d.w = w
+	d.written = make([]bool, len(d.blocks))
 	return d, nil
 }
 
@@ -106,6 +127,9 @@ func (d *Decoder) AddSymbol(id PayloadID, sym []byte) (done bool, err error) {
 	}
 	if d.eager && b.Received() >= b.K() {
 		if err := b.Decode(); err == nil {
+			if err := d.writeOut(id.SBN); err != nil {
+				return false, err
+			}
 			d.pending--
 		} else if !errors.Is(err, ErrInsufficientSymbols) {
 			return false, err
@@ -114,13 +138,39 @@ func (d *Decoder) AddSymbol(id PayloadID, sym []byte) (done bool, err error) {
 	return d.pending == 0, nil
 }
 
-// Decoded reports whether every source block has been decoded.
+// writeOut writes decoded block sbn to the WriterAt, if there is one, and
+// releases its memory. It is safe to call concurrently for different blocks:
+// io.WriterAt allows parallel writes to non-overlapping ranges.
+func (d *Decoder) writeOut(sbn uint8) error {
+	if d.w == nil || d.written[sbn] {
+		return nil
+	}
+	b := d.blocks[sbn]
+	info := d.layout.Block(sbn)
+	var buf []byte
+	if d.layout.interleaved() {
+		buf = make([]byte, info.Length)
+		d.layout.scatter(buf, b.source, info.K)
+	} else {
+		buf, _ = b.AppendSource(make([]byte, 0, info.Length))
+	}
+	if _, err := d.w.WriteAt(buf, int64(info.Offset)); err != nil {
+		return fmt.Errorf("graptorq: writing source block %d: %w", sbn, err)
+	}
+	b.release()
+	d.written[sbn] = true
+	return nil
+}
+
+// Decoded reports whether every source block has been decoded (and, for a
+// decoder from NewDecoderWriterAt, written).
 func (d *Decoder) Decoded() bool { return d.pending == 0 }
 
-// Decode decodes every block that has at least K symbols, in parallel. It
-// returns nil when the whole object is decoded, and otherwise an error
-// wrapping ErrInsufficientSymbols (a *DecodeError for the first block that
-// could not be decoded).
+// Decode decodes every block that has at least K symbols, in parallel, and
+// writes decoded blocks to the WriterAt of NewDecoderWriterAt. It returns nil
+// when the whole object is complete; otherwise it returns the first error
+// writing a block, or else an error wrapping ErrInsufficientSymbols (a
+// *DecodeError for the first block that could not be decoded).
 func (d *Decoder) Decode(ctx context.Context) error {
 	errs := make([]error, len(d.blocks))
 	err := parallel(ctx, len(d.blocks), d.o.concurrency, func(i int) error {
@@ -131,27 +181,46 @@ func (d *Decoder) Decode(ctx context.Context) error {
 		case !b.decoded:
 			errs[i] = b.Decode()
 		}
+		if errs[i] == nil {
+			errs[i] = d.writeOut(uint8(i))
+		}
 		return nil
 	})
 	if err != nil {
 		return err
 	}
 	d.pending = 0
-	var first error
+	var first, writeErr error
 	for i, e := range errs {
-		if e != nil || (d.blocks[i] != nil && !d.blocks[i].decoded) {
+		if e != nil || !d.complete(i) {
 			d.pending++
 			if first == nil {
 				first = e
 			}
+			if writeErr == nil && e != nil && !errors.Is(e, ErrInsufficientSymbols) {
+				writeErr = e
+			}
 		}
+	}
+	if writeErr != nil {
+		return writeErr
 	}
 	return first
 }
 
+// complete reports whether block i is done: decoded, and written out if
+// there is a WriterAt.
+func (d *Decoder) complete(i int) bool {
+	b := d.blocks[i]
+	return b != nil && b.decoded && (d.w == nil || d.written[i])
+}
+
 // AppendObject appends the decoded object to dst.
 func (d *Decoder) AppendObject(dst []byte) ([]byte, error) {
-	if d.pending != 0 {
+	switch {
+	case d.w != nil:
+		return dst, ErrStreamed
+	case d.pending != 0:
 		return dst, ErrNotDecoded
 	}
 	for sbn := range d.blocks {
@@ -170,7 +239,10 @@ func (d *Decoder) AppendObject(dst []byte) ([]byte, error) {
 
 // WriteTo writes the decoded object to w.
 func (d *Decoder) WriteTo(w io.Writer) (int64, error) {
-	if d.pending != 0 {
+	switch {
+	case d.w != nil:
+		return 0, ErrStreamed
+	case d.pending != 0:
 		return 0, ErrNotDecoded
 	}
 	var total int64
@@ -201,5 +273,6 @@ func (d *Decoder) Reset() {
 			b.Reset()
 		}
 	}
+	clear(d.written)
 	d.pending = len(d.blocks)
 }
