@@ -383,3 +383,29 @@ func TestPartialAndParallelPlans(t *testing.T) {
 		}
 	}
 }
+
+// BenchmarkDecodePlan builds decoding plans for 10% of the source symbols
+// lost and replaced by repair symbols (plus two).
+func BenchmarkDecodePlan(b *testing.B) {
+	for _, k := range []int{1000, 10000, 50000} {
+		p, _ := rfc.ForK(k)
+		var isis, want []uint32
+		for x := range p.KPrime {
+			if x%10 == 3 {
+				want = append(want, uint32(x))
+			} else {
+				isis = append(isis, uint32(x))
+			}
+		}
+		for j := range len(want) + 2 {
+			isis = append(isis, uint32(p.KPrime+j))
+		}
+		b.Run("K'="+itoa(p.KPrime), func(b *testing.B) {
+			for b.Loop() {
+				if _, err := NewPartialPlan(p, isis, want); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}

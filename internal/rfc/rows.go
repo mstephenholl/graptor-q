@@ -6,8 +6,8 @@ import "slices"
 // encoding symbol generator Enc[K', C, Tuple[K', x]] (Section 5.3.5.3): the d
 // LT columns in [0, W) followed by the d1 PI columns in [W, L).
 //
-// Within each part the indices are distinct for every row of Table 2 (W and
-// P1 are prime and d <= W-2), so the row is the plain sum of these symbols.
+// The indices are distinct for every ISI and every row of Table 2 (see
+// TestEncColsDistinctProof), so the row is the plain sum of these symbols.
 func (p *Params) AppendEncCols(dst []uint16, x uint32) []uint16 {
 	return p.AppendTupleCols(dst, p.Tuple(x))
 }

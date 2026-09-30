@@ -38,6 +38,7 @@ type Plan struct {
 
 	instrs []instr
 	args   []uint16
+	n4     int // index of the first instruction of the final forward substitution (N4)
 }
 
 // NewPlan builds the plan for the constraint matrix made of the S LDPC rows,
@@ -61,18 +62,52 @@ func NewPartialPlan(p *rfc.Params, isis []uint32, want []uint32) (*Plan, error) 
 	if err != nil {
 		return nil, err
 	}
-	var need []bool
+	pl := assemble(ph, p2, len(isis))
 	if want != nil {
-		need = make([]bool, p.L)
-		var cols []uint16
-		for _, x := range want {
-			cols = p.AppendEncCols(cols[:0], x)
-			for _, c := range cols {
-				need[c] = true
+		pl = pl.Prune(want)
+	}
+	return pl, nil
+}
+
+// Prune returns a plan that only computes the intermediate symbols needed to
+// generate the encoding symbols with the internal symbol IDs in want. It
+// shares memory with pl, which is unchanged.
+//
+// Only the final forward substitution (N4) is pruned: each of its
+// instructions computes one pivot column from earlier pivot columns and
+// columns of U (which the preceding instructions always compute), so walking
+// it backwards propagates the need for a column to everything it reads.
+func (pl *Plan) Prune(want []uint32) *Plan {
+	p := pl.Params
+	need := make([]bool, pl.Slots)
+	var cols []uint16
+	for _, x := range want {
+		cols = p.AppendEncCols(cols[:0], x)
+		for _, c := range cols {
+			need[c] = true
+		}
+	}
+	tail := pl.instrs[pl.n4:]
+	keep := make([]bool, len(tail))
+	kept := 0
+	for i := len(tail) - 1; i >= 0; i-- {
+		if ins := &tail[i]; need[ins.dst] {
+			keep[i] = true
+			kept++
+			for _, a := range pl.args[ins.a0:ins.a1] {
+				need[a] = true
 			}
 		}
 	}
-	return assemble(ph, p2, len(isis), need), nil
+	q := *pl
+	q.instrs = make([]instr, pl.n4, pl.n4+kept)
+	copy(q.instrs, pl.instrs[:pl.n4])
+	for i, k := range keep {
+		if k {
+			q.instrs = append(q.instrs, tail[i])
+		}
+	}
+	return &q
 }
 
 // Solvable reports whether the constraint matrix for isis has full rank,
@@ -88,16 +123,20 @@ func Solvable(p *rfc.Params, isis []uint32) bool {
 // Size returns the approximate memory footprint of the plan in bytes.
 func (pl *Plan) Size() int { return len(pl.instrs)*16 + len(pl.args)*2 + 64 }
 
+// emitFrom emits an instruction whose arguments were appended to pl.args
+// from index a0 on.
+func (pl *Plan) emitFrom(kind opKind, dst int, src int32, a0 int) {
+	pl.instrs = append(pl.instrs, instr{kind: kind, dst: uint16(dst), src: src, a0: uint32(a0), a1: uint32(len(pl.args))})
+}
+
 func (pl *Plan) emit(kind opKind, c byte, dst int, src int32, args ...uint16) {
 	a0 := uint32(len(pl.args))
 	pl.args = append(pl.args, args...)
 	pl.instrs = append(pl.instrs, instr{kind: kind, c: c, dst: uint16(dst), src: src, a0: a0, a1: uint32(len(pl.args))})
 }
 
-// assemble emits the plan. If need is not nil, the final forward
-// substitution (N4) is limited to the pivot columns that need[c] marks,
-// together with everything they transitively depend on.
-func assemble(ph *phase1, p2 *phase2, inputs int, need []bool) *Plan {
+// assemble emits the plan.
+func assemble(ph *phase1, p2 *phase2, inputs int) *Plan {
 	rs := ph.rs
 	p := rs.p
 	L := p.L
@@ -106,20 +145,19 @@ func assemble(ph *phase1, p2 *phase2, inputs int, need []bool) *Plan {
 	n := p.KPrime + p.S
 	pl.instrs = make([]instr, 0, 2*len(ph.pivRow)+len(p2.cand)+p.H+3*n+len(p2.ops))
 	pl.args = make([]uint16, 0, 2*len(rs.cols)+2*n+len(p2.ops))
-	var args []uint16
 
 	// slot of phase-2 row: the U column whose value it holds at the end.
 	slot := func(row int32) int { return int(ph.uCols[p2.rowCol[row]]) }
 
 	// N1: y_p = D_p + sum of y_q over the earlier pivots in row p, into slot pivCol[p].
 	for i, r := range ph.pivRow {
-		args = args[:0]
+		a0 := len(pl.args)
 		for _, c := range rs.row(int(r)) {
 			if q := int(ph.colPiv[c]); q >= 0 && q != i {
-				args = append(args, c)
+				pl.args = append(pl.args, c)
 			}
 		}
-		pl.emit(opSet, 0, int(ph.pivCol[i]), rs.input(int(r)), args...)
+		pl.emitFrom(opSet, int(ph.pivCol[i]), rs.input(int(r)), a0)
 	}
 
 	// N2: right-hand sides of the used binary rows of the reduced system.
@@ -127,13 +165,13 @@ func assemble(ph *phase1, p2 *phase2, inputs int, need []bool) *Plan {
 		if p2.rowCol[b] < 0 {
 			continue
 		}
-		args = args[:0]
+		a0 := len(pl.args)
 		for _, c := range rs.row(int(r)) {
 			if ph.colPiv[c] >= 0 {
-				args = append(args, c)
+				pl.args = append(pl.args, c)
 			}
 		}
-		pl.emit(opSet, 0, slot(int32(b)), rs.input(int(r)), args...)
+		pl.emitFrom(opSet, slot(int32(b)), rs.input(int(r)), a0)
 	}
 
 	// N2: right-hand sides of the used HDPC rows, G_HDPC * y.
@@ -194,29 +232,16 @@ func assemble(ph *phase1, p2 *phase2, inputs int, need []bool) *Plan {
 	}
 
 	// N4: C[pivCol[p]] = D_p + sum of the other C in the original row p,
-	// in pivot order (the pivot rows are unit lower triangular). Pivot p only
-	// reads columns of earlier pivots and of U, so walking the pivots
-	// backwards propagates need to everything a needed pivot reads.
-	if need != nil {
-		for i := len(ph.pivRow) - 1; i >= 0; i-- {
-			if need[ph.pivCol[i]] {
-				for _, c := range rs.row(int(ph.pivRow[i])) {
-					need[c] = true
-				}
-			}
-		}
-	}
+	// in pivot order (the pivot rows are unit lower triangular).
+	pl.n4 = len(pl.instrs)
 	for i, r := range ph.pivRow {
-		if need != nil && !need[ph.pivCol[i]] {
-			continue
-		}
-		args = args[:0]
+		a0 := len(pl.args)
 		for _, c := range rs.row(int(r)) {
 			if c != ph.pivCol[i] {
-				args = append(args, c)
+				pl.args = append(pl.args, c)
 			}
 		}
-		pl.emit(opSet, 0, int(ph.pivCol[i]), rs.input(int(r)), args...)
+		pl.emitFrom(opSet, int(ph.pivCol[i]), rs.input(int(r)), a0)
 	}
 	return pl
 }

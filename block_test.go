@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/mholland/graptorq/internal/solver"
 	"github.com/mholland/graptorq/internal/testutil"
 )
 
@@ -268,4 +269,103 @@ func TestDecoderMemoryLimit(t *testing.T) {
 	if !errors.Is(err2, ErrMemoryLimit) || accepted > K+20 {
 		t.Fatalf("accepted %d symbols, last error %v", accepted, err2)
 	}
+}
+
+// The low-loss path must succeed exactly when the full decoding system has
+// full rank (checked with the solver's symbolic rank test), and then return
+// the source block. Received sets with no extra symbols make singular
+// systems occur regularly.
+func TestLowLossPathEquivalence(t *testing.T) {
+	rng := rand.New(rand.NewPCG(51, 52))
+	trials, singular := 4000, 0
+	if testing.Short() {
+		trials = 1000
+	}
+	for trial := range trials {
+		K := 1 + rng.IntN(60)
+		T := 1 + rng.IntN(4)
+		if trial%10 == 0 {
+			K, T = 1+rng.IntN(600), 1+rng.IntN(100)
+		}
+		data := make([]byte, K*T)
+		for i := range data {
+			data[i] = byte(rng.Uint32())
+		}
+		enc, _ := NewBlockEncoder(data, T)
+		dec, _ := NewBlockDecoder(len(data), T)
+		p := dec.p
+		m := 1 + rng.IntN(min(K, 25))
+		lost := rng.Perm(K)[:m]
+		isLost := make([]bool, K)
+		for _, i := range lost {
+			isLost[i] = true
+		}
+		var isis []uint32
+		for i := range K {
+			if !isLost[i] {
+				sym, _ := enc.AppendSymbol(nil, uint32(i))
+				dec.AddSymbol(uint32(i), sym)
+				isis = append(isis, uint32(i))
+			}
+		}
+		for x := K; x < p.KPrime; x++ {
+			isis = append(isis, uint32(x))
+		}
+		for dec.Received() < K+rng.IntN(3) {
+			esi := uint32(K + rng.IntN(1<<20))
+			sym, _ := enc.AppendSymbol(nil, esi)
+			if added, _ := dec.AddSymbol(esi, sym); added {
+				isis = append(isis, esi+uint32(p.KPrime-K))
+			}
+		}
+		want := solver.Solvable(p, isis)
+		out := make([]byte, K*T)
+		if got := dec.decodeLowLoss(out); got != want {
+			t.Fatalf("trial %d K=%d m=%d: low-loss path %v, full system solvable %v", trial, K, m, got, want)
+		}
+		if !want {
+			singular++
+			continue
+		}
+		if !bytes.Equal(out, data) {
+			t.Fatalf("trial %d K=%d m=%d: wrong data from the low-loss path", trial, K, m)
+		}
+	}
+	if singular == 0 {
+		t.Error("no singular systems: the test does not cover failures")
+	}
+	t.Logf("%d trials, %d singular", trials, singular)
+}
+
+// Both decoding paths through the public API, including the fallback from
+// a singular low-loss system to the full solver.
+func TestDecodePathsAgree(t *testing.T) {
+	rng := rand.New(rand.NewPCG(53, 54))
+	for _, mode := range []int{1, -1} {
+		lowLossMode = mode
+		for trial := range 100 {
+			K, T := 1+rng.IntN(1500), 1+rng.IntN(64)
+			data := make([]byte, K*T-rng.IntN(T))
+			for i := range data {
+				data[i] = byte(rng.Uint32())
+			}
+			enc, _ := NewBlockEncoder(data, T)
+			dec, _ := NewBlockDecoder(len(data), T)
+			loss := rng.Float64() * 0.2
+			for i := range K {
+				if rng.Float64() >= loss {
+					sym, _ := enc.AppendSymbol(nil, uint32(i))
+					dec.AddSymbol(uint32(i), sym)
+				}
+			}
+			for esi := uint32(K); dec.Decode() != nil; esi++ {
+				sym, _ := enc.AppendSymbol(nil, esi)
+				dec.AddSymbol(esi, sym)
+			}
+			if got, _ := dec.AppendSource(nil); !bytes.Equal(got, data) {
+				t.Fatalf("mode %d trial %d: wrong data", mode, trial)
+			}
+		}
+	}
+	lowLossMode = 0
 }

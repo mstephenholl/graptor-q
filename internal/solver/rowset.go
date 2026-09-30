@@ -15,6 +15,7 @@ package solver
 
 import (
 	"errors"
+	"sync"
 
 	"github.com/mholland/graptorq/internal/rfc"
 )
@@ -38,14 +39,12 @@ func newRowSet(p *rfc.Params, isis []uint32) *rowSet {
 	n := p.S + len(isis)
 	rs := &rowSet{p: p, start: make([]int32, 1, n+1)}
 	rs.cols = make([]uint16, 0, 3*p.B+3*p.S+len(isis)*8)
-	for _, r := range p.LDPCRows() {
-		rs.cols = append(rs.cols, r...)
-		rs.start = append(rs.start, int32(len(rs.cols)))
-	}
+	ldpc := ldpcRows(p)
+	rs.cols = append(rs.cols, ldpc.cols...)
+	rs.start = append(rs.start, ldpc.start[1:]...)
 	for _, x := range isis {
-		n := len(rs.cols)
+		// LT row columns are always distinct, so no cancellation is needed.
 		rs.cols = p.AppendEncCols(rs.cols, x)
-		rs.cols = append(rs.cols[:n], rfc.CancelPairs(rs.cols[n:])...)
 		rs.start = append(rs.start, int32(len(rs.cols)))
 	}
 
@@ -71,6 +70,28 @@ func newRowSet(p *rfc.Params, isis []uint32) *rowSet {
 		}
 	}
 	return rs
+}
+
+// csr is a list of rows of column indices.
+type csr struct {
+	start []int32 // len rows+1, start[0] = 0
+	cols  []uint16
+}
+
+var ldpcCache sync.Map // K' -> *csr
+
+// ldpcRows returns the S LDPC rows of p, computed once per K'.
+func ldpcRows(p *rfc.Params) *csr {
+	if v, ok := ldpcCache.Load(p.KPrime); ok {
+		return v.(*csr)
+	}
+	c := &csr{start: []int32{0}}
+	for _, r := range p.LDPCRows() {
+		c.cols = append(c.cols, r...)
+		c.start = append(c.start, int32(len(c.cols)))
+	}
+	v, _ := ldpcCache.LoadOrStore(p.KPrime, c)
+	return v.(*csr)
 }
 
 func (rs *rowSet) nrows() int            { return len(rs.start) - 1 }

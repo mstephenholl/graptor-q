@@ -144,6 +144,23 @@ func TestEncColsDistinct(t *testing.T) {
 	}
 }
 
+// The columns of every LT row are distinct, for any ISI (so rows need no
+// cancellation of repeated entries):
+//   - LT part: b + i*a mod W for i < d, with W prime, 0 < a < W and d <= W-2.
+//   - PI part: the walk b1 + i*a1 mod P1 has period P1 (prime, 0 < a1 < P1);
+//     each of the d1 <= 3 accepted values costs at most 1 + (P1-P) steps
+//     (values >= P are skipped), so they are distinct if 3*(1+P1-P) < P1.
+func TestEncColsDistinctProof(t *testing.T) {
+	for _, p := range All() {
+		if p.W-2 >= p.W || !isPrime(p.W) || !isPrime(p.P1) {
+			t.Fatalf("K'=%d: LT argument does not apply", p.KPrime)
+		}
+		if 3*(1+p.P1-p.P) >= p.P1 {
+			t.Fatalf("K'=%d: P=%d P1=%d: PI walk could repeat within 3 values", p.KPrime, p.P, p.P1)
+		}
+	}
+}
+
 func TestLDPCRows(t *testing.T) {
 	for _, p := range All() {
 		rows := p.LDPCRows()

@@ -2,6 +2,12 @@ package solver
 
 import "slices"
 
+// The r = 2 components are rebuilt once more than 1/rebuildFactor of the
+// bucket-2 rows are new since the last build. Measured at K' = 10017 and
+// 50511: going from 8 to 2 makes plans 13% faster to build for 2% more
+// inactivated columns; 1 gains little more but inactivates 5% more.
+const rebuildFactor = 2
+
 // Column states during and after phase 1.
 const (
 	colV        uint8 = iota // still in the submatrix V
@@ -240,7 +246,7 @@ func (ph *phase1) minDegreeRow(r int) int32 {
 // edges have appeared since. The rule only affects how many columns are
 // inactivated, never the correctness of the solution.
 func (ph *phase1) componentRow() int32 {
-	if !ph.haveComp || ph.newTwos*8 > ph.builtTwos {
+	if !ph.haveComp || ph.newTwos*rebuildFactor > ph.builtTwos {
 		ph.buildComponents()
 	}
 	if r := ph.nextComponentRow(); r >= 0 {

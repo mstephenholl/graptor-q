@@ -1,6 +1,7 @@
 package solver
 
 import (
+	"encoding/binary"
 	"math/bits"
 	"sync"
 
@@ -215,39 +216,76 @@ func hdpcRows(ph *phase1, pivBits []uint64, words int) [][]byte {
 	u := len(ph.uCols)
 	H, n := p.H, p.KPrime+p.S
 	pairs := hdpcPairs(p)
-	buf := make([]byte, (H+1)*u)
-	hd := make([][]byte, H)
-	for h := range hd {
-		hd[h] = buf[h*u : (h+1)*u : (h+1)*u]
-	}
-	z := buf[H*u:]
-	for j := range n {
-		if j > 0 {
-			gf256.MulSlice(z, z, 2)
+
+	// The recurrence runs on 64-bit words holding 8 coefficients each (byte
+	// k of the row is byte k%8 of word k/8, little-endian), so that each
+	// step is one pass: multiplication by alpha is a shift and a conditional
+	// XOR with the low byte of the polynomial.
+	uw := (u + 7) / 8
+	wbuf := make([]uint64, (H+1)*uw)
+	z := wbuf[H*uw:]
+	for j := range n - 1 {
+		for i, x := range z {
+			hi := x & 0x8080808080808080
+			z[i] = (x&^hi)<<1 ^ (hi>>7)*(gf256.Poly&0xFF)
 		}
 		if q := int(ph.colPiv[j]); q >= 0 {
+			// Bit k of the bitset becomes byte k of z: each bitset byte
+			// spreads into one word of z.
 			for i, x := range pivBits[q*words : (q+1)*words] {
-				for ; x != 0; x &= x - 1 {
-					z[i<<6+bits.TrailingZeros64(x)] ^= 1
+				zw := z[i*8 : min(i*8+8, uw)]
+				for t := range zw {
+					zw[t] ^= spreadBits[byte(x>>(8*t))]
 				}
 			}
 		} else {
-			z[ph.uIdx[j]] ^= 1
+			k := int(ph.uIdx[j])
+			z[k>>3] ^= 1 << (k & 7 * 8)
 		}
-		if j < n-1 {
-			gf256.AddSlice(hd[pairs.r1[j]], z)
-			gf256.AddSlice(hd[pairs.r2[j]], z)
-		} else {
-			for h := range H {
-				gf256.MulAddSlice(hd[h], z, gf256.Exp(h))
-			}
+		h1 := wbuf[int(pairs.r1[j])*uw : int(pairs.r1[j]+1)*uw]
+		h2 := wbuf[int(pairs.r2[j])*uw : int(pairs.r2[j]+1)*uw]
+		for i, x := range z {
+			h1[i] ^= x
+			h2[i] ^= x
 		}
 	}
+
+	buf := make([]byte, (H+1)*uw*8)
+	for i, x := range wbuf {
+		binary.LittleEndian.PutUint64(buf[i*8:], x)
+	}
+	hd := make([][]byte, H)
+	for h := range hd {
+		hd[h] = buf[h*uw*8 : h*uw*8+u : h*uw*8+u]
+	}
+	// The last column: z = alpha*z + X_{n-1}, and MT holds alpha^h in row h.
+	zb := buf[H*uw*8 : H*uw*8+u]
+	gf256.MulSlice(zb, zb, 2)
+	if q := int(ph.colPiv[n-1]); q >= 0 {
+		for i, x := range pivBits[q*words : (q+1)*words] {
+			for ; x != 0; x &= x - 1 {
+				zb[i<<6+bits.TrailingZeros64(x)] ^= 1
+			}
+		}
+	} else {
+		zb[ph.uIdx[n-1]] ^= 1
+	}
 	for h := range H {
+		gf256.MulAddSlice(hd[h], zb, gf256.Exp(h))
 		hd[h][ph.uIdx[n+h]] ^= 1
 	}
 	return hd
 }
+
+// spreadBits[b] has byte i equal to bit i of b.
+var spreadBits = func() (t [256]uint64) {
+	for b := range t {
+		for i := range 8 {
+			t[b] |= uint64(b>>i&1) << (8 * i)
+		}
+	}
+	return
+}()
 
 func xorWords(dst, src []uint64) {
 	src = src[:len(dst)]

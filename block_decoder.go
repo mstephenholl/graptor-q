@@ -1,6 +1,7 @@
 package graptorq
 
 import (
+	"github.com/mholland/graptorq/internal/gf256"
 	"github.com/mholland/graptorq/internal/rfc"
 	"github.com/mholland/graptorq/internal/solver"
 )
@@ -144,6 +145,11 @@ func (d *BlockDecoder) Decode() error {
 		return nil
 	}
 
+	if d.useLowLoss() && d.decodeLowLoss(out) {
+		d.out, d.decoded = out, true
+		return nil
+	}
+
 	p := d.p
 	n := d.nsrc + (p.KPrime - d.k) + len(d.repESI)
 	isis := make([]uint32, 0, n)
@@ -192,6 +198,114 @@ func (d *BlockDecoder) Decode() error {
 	}
 	d.out, d.decoded = out, true
 	return nil
+}
+
+// lowLossMode forces (1) or disables (-1) the low-loss decoding path; zero
+// chooses by cost. It is a test hook.
+var lowLossMode = 0
+
+// useLowLoss reports whether decodeLowLoss is expected to be faster than
+// building a decoding plan. The cached encoder plan replaces the symbolic
+// solve, at the price of a dense m x m solve for the m missing symbols.
+func (d *BlockDecoder) useLowLoss() bool {
+	if d.o.planCache == nil || lowLossMode < 0 {
+		return false
+	}
+	if lowLossMode > 0 {
+		return true
+	}
+	return lowLossWorthIt(d.p.KPrime, d.t, d.k-d.nsrc)
+}
+
+func lowLossWorthIt(kPrime, t, m int) bool {
+	// The dense solve costs about m*m*(m+t) byte operations; the symbolic
+	// solve it saves is linear in K'. Measured break-even points
+	// (BenchmarkDecodePaths, one P-core) lie between 2400*K' and 9600*K'
+	// for K' from 100 to 50000 and T from 64 to 1280; 2000*K' stays below
+	// all of them.
+	return int64(m)*int64(m)*int64(m+t) <= 2000*int64(kPrime)
+}
+
+// decodeLowLoss recovers the m missing source symbols with the cached
+// encoder plan instead of a decoding plan. The intermediate symbols are a
+// linear function of the K' extended source symbols, so with C0 computed
+// from the received source symbols (missing ones set to zero) and C_k the
+// response to a unit value of missing symbol k, every repair symbol j gives
+// the equation
+//
+//	y_j - Enc_j(C0) = sum over k of Enc_j(C_k) * s_k.
+//
+// The responses C_k are computed together by running the plan on symbols of
+// m bytes, input k being the k-th unit vector. The resulting m-unknown dense
+// system is solvable exactly when the full decoding system is. It returns
+// false if the equations are singular (the caller then uses the full solver,
+// which also uses every received symbol).
+func (d *BlockDecoder) decodeLowLoss(out []byte) bool {
+	p, T := d.p, d.t
+	full, err := d.o.planCache.plan(p)
+	if err != nil {
+		return false
+	}
+	// A few equations beyond m make a singular system very unlikely; the
+	// fallback to the full solver uses all of them. Only the intermediate
+	// symbols these repair symbols need are computed.
+	m := d.k - d.nsrc
+	r := min(len(d.repESI), m+20)
+	shift := uint32(p.KPrime - d.k)
+	want := make([]uint32, r)
+	for j, esi := range d.repESI[:r] {
+		want[j] = esi + shift
+	}
+	plan := full.Prune(want)
+
+	var missing []int
+	in := make([][]byte, p.KPrime) // padding symbols stay nil (zero)
+	for i, off := range d.srcOff {
+		if off >= 0 {
+			in[i] = d.sym(off)
+		} else {
+			missing = append(missing, i)
+		}
+	}
+
+	if n := plan.Slots * T; cap(d.work) < n {
+		d.work = make([]byte, n)
+	}
+	c0 := d.work[:plan.Slots*T]
+	plan.ExecuteParallel(c0, T, in, d.o.concurrency)
+
+	clear(in)
+	units := make([]byte, m*m)
+	for k, i := range missing {
+		in[i] = units[k*m : (k+1)*m]
+		in[i][k] = 1
+	}
+	ck := make([]byte, plan.Slots*m)
+	plan.Execute(ck, m, in)
+
+	buf := make([]byte, r*(m+T))
+	rows, rhs := make([][]byte, r), make([][]byte, r)
+	var cols [48]uint16
+	for j, isi := range want {
+		rows[j] = buf[j*(m+T) : j*(m+T)+m]
+		rhs[j] = buf[j*(m+T)+m : (j+1)*(m+T)]
+		solver.EncodeSymbol(p, ck, m, isi, rows[j], cols[:0])
+		solver.EncodeSymbol(p, c0, T, isi, rhs[j], cols[:0])
+		gf256.AddSlice(rhs[j], d.sym(d.repOff[j]))
+	}
+	pivots, err := solver.SolveDense(rows, rhs, m)
+	if err != nil {
+		return false
+	}
+	for i, off := range d.srcOff {
+		if off >= 0 {
+			copy(out[i*T:(i+1)*T], d.sym(off))
+		}
+	}
+	for k, i := range missing {
+		copy(out[i*T:(i+1)*T], rhs[pivots[k]])
+	}
+	return true
 }
 
 // AppendSource appends the decoded block (length bytes) to dst.
