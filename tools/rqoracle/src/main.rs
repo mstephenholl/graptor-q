@@ -18,7 +18,7 @@
 
 use raptorq::{
     Decoder, Encoder, EncodingPacket, ObjectTransmissionInformation, SourceBlockDecoder,
-    SourceBlockEncoder,
+    SourceBlockEncoder, SourceBlockEncodingPlan,
 };
 use std::hint::black_box;
 use std::time::Instant;
@@ -224,18 +224,24 @@ fn decode(oti_hex: &str) {
 /// Mirrors interop's BenchmarkCmp: encode = build the block encoder and one
 /// repair symbol; decode = 10% of the source symbols lost (ESI % 10 == 3),
 /// replaced by as many repair symbols plus two.
+///
+/// SourceBlockEncoder::new reuses encoding plans from a process-wide cache,
+/// so lib=cberner encodes with the plan of the first iteration, like
+/// graptorq's plan cache. lib=cberner-cold generates the plan for every
+/// block, like graptorq's WithoutPlanCache.
 fn bench() {
     for &(k, t) in &[(100usize, 1280u16), (1000, 1280), (10000, 1280), (50000, 256)] {
         let data = pattern(k * t as usize, 1);
         let oti = ObjectTransmissionInformation::new(data.len() as u64, t, 1, 1, 1);
         let iters = (2_000_000_000 / data.len()).clamp(3, 200) as u32;
-        let report = |op: &str, elapsed: std::time::Duration| {
+        let report_lib = |lib: &str, op: &str, elapsed: std::time::Duration| {
             let ns = elapsed.as_nanos() as f64 / iters as f64;
             println!(
-                "BenchmarkCmp/lib=cberner/op={}/K={}/T={}-1\t{}\t{:.0} ns/op\t{:.2} MB/s",
-                op, k, t, iters, ns, data.len() as f64 / ns * 1e3
+                "BenchmarkCmp/lib={}/op={}/K={}/T={}-1\t{}\t{:.0} ns/op\t{:.2} MB/s",
+                lib, op, k, t, iters, ns, data.len() as f64 / ns * 1e3
             );
         };
+        let report = |op: &str, elapsed: std::time::Duration| report_lib("cberner", op, elapsed);
 
         let start = Instant::now();
         for _ in 0..iters {
@@ -243,6 +249,14 @@ fn bench() {
             black_box(enc.repair_packets(0, 1));
         }
         report("encode", start.elapsed());
+
+        let start = Instant::now();
+        for _ in 0..iters {
+            let plan = SourceBlockEncodingPlan::generate(k as u16);
+            let enc = SourceBlockEncoder::with_encoding_plan(0, &oti, &data, &plan);
+            black_box(enc.repair_packets(0, 1));
+        }
+        report_lib("cberner-cold", "encode", start.elapsed());
 
         let enc = SourceBlockEncoder::new(0, &oti, &data);
         let source = enc.source_packets();

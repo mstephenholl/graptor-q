@@ -33,7 +33,7 @@ Decoding K = 10,000, T = 1280 with 10% loss (about 18.7 ms) breaks down as:
 - **Prefetching for small symbols in large blocks.** A head-only prefetch of the next instruction's operands measured −12% at K = 50,000, T = 256. It had no effect at T = 1280 and cost 15% on cache-resident plans, so it needs a heuristic on T and the working-set size.
 - **Zero-copy symbol ingestion.** An opt-in API where the caller hands over ownership of symbol buffers would remove one of the two copies, about 6% of decode.
 - **Wider fused kernels.** A multi-source multiply-add for the HDPC phase-2 operations, and an AVX-512 tier on CPUs that have it.
-- **Faster plan construction.** Without the plan cache, encoding K = 50,000, T = 256 runs at 221 MB/s against cberner's 337 MB/s, and every decode builds a plan (about 21% of decode time at K = 10,000). Profile `BenchmarkPlan` at K' = 56,403 and compare with cberner's solver.
+- **Faster plan construction.** Every decode builds a plan (about 21% of decode time at K = 10,000), and so does an encoder without the plan cache. Construction is already 2–3.7× faster than cberner's (its `SourceBlockEncodingPlan::generate`), and pooling the scratch memory of `NewPlan` took another 11–15% off. In the profile at K' = 56,403, the largest single cost is expanding pivot bitsets into bytes for the HDPC recurrence, which costs more than the recurrence itself; a SIMD kernel that expands the bits in registers could remove it. Phase 1's per-row state (chosen, V-degree) lives in separate arrays, which costs two cache misses per row where one would do.
 - **Parallel plan construction.** Relevant for multi-core decoders of large blocks, where plan construction is serial but execution already runs in parallel stripes.
 - **Native arm64 profiling.** NEON correctness is verified under qemu, but its performance has never been measured.
 
@@ -42,6 +42,7 @@ Decoding K = 10,000, T = 1280 with 10% loss (about 18.7 ms) breaks down as:
 - **Cache-blocked execution.** Replaying the plan over byte stripes was slower at every stripe width, for working sets from 1 MB to 64 MB (see `Plan.ExecuteRange`).
 - **Software prefetching at T = 1280.** Whole-operand prefetch cost 13–20%; head-only prefetch was within ±1%.
 - **Huge pages (`MADV_HUGEPAGE`).** No change at K = 10,000 and 2–3% at K = 50,000.
+- **Bit-sliced HDPC recurrence.** Keeping z and the HDPC rows bit-sliced, so that adding the binary X_j is one XOR, was 4–5% slower up to K' = 10,017 and neutral at 56,403: AVX2 byte operations already handle 32 coefficients per instruction, and bit-slices need 8 XORs per 64.
 
 ### How to measure
 
