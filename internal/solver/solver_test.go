@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"math/rand/v2"
+	"slices"
 	"testing"
 
 	"github.com/mholland/graptorq/internal/gf256"
@@ -407,5 +408,81 @@ func BenchmarkDecodePlan(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+// samePlan reports whether two plans are the same program.
+func samePlan(a, b *Plan) bool {
+	if a.Params != b.Params || a.Slots != b.Slots || a.Inputs != b.Inputs || a.n4 != b.n4 || len(a.instrs) != len(b.instrs) {
+		return false
+	}
+	for i := range a.instrs {
+		x, y := a.instrs[i], b.instrs[i]
+		if x.kind != y.kind || x.c != y.c || x.dst != y.dst || x.src != y.src ||
+			!slices.Equal(a.args[x.a0:x.a1], b.args[y.a0:y.a1]) {
+			return false
+		}
+	}
+	return true
+}
+
+// A reused Workspace must behave exactly like a fresh one, whatever it was
+// used for before: growing and shrinking K', full, partial and singular
+// systems, and pruning of other plans.
+func TestWorkspaceReuse(t *testing.T) {
+	rng := rand.New(rand.NewPCG(61, 62))
+	var w Workspace
+	trials := 300
+	if testing.Short() {
+		trials = 100
+	}
+	singular := 0
+	for trial := range trials {
+		// Alternate large and small blocks so that state left by a larger
+		// problem meets a smaller one and vice versa.
+		k := 500 + rng.IntN(2500)
+		if trial%2 == 1 {
+			k = 1 + rng.IntN(600)
+		}
+		p, _ := rfc.ForK(k)
+		// K' received symbols, or one fewer (singular), with random losses.
+		n := p.KPrime + rng.IntN(3) - 1
+		var isis, want []uint32
+		for x := range p.KPrime {
+			if rng.IntN(8) == 0 {
+				want = append(want, uint32(x))
+			} else {
+				isis = append(isis, uint32(x))
+			}
+		}
+		for j := 0; len(isis) < n; j++ {
+			isis = append(isis, uint32(p.KPrime+j*7))
+		}
+		isis = isis[:n]
+		if rng.IntN(3) == 0 {
+			want = nil // full plan
+		}
+
+		fresh, errFresh := NewPartialPlan(p, isis, want)
+		got, errGot := w.NewPartialPlan(p, isis, want)
+		if (errFresh == nil) != (errGot == nil) || w.Solvable(p, isis) != (errFresh == nil) {
+			t.Fatalf("trial %d K'=%d: fresh err %v, reused err %v", trial, p.KPrime, errFresh, errGot)
+		}
+		if errFresh != nil {
+			singular++
+			continue
+		}
+		if !samePlan(fresh, got) {
+			t.Fatalf("trial %d K'=%d (partial %v): reused workspace built a different plan", trial, p.KPrime, want != nil)
+		}
+		if want != nil {
+			enc, _ := NewPlan(p, seqISIs(p.KPrime))
+			if !samePlan(enc.Prune(want), w.Prune(enc, want)) {
+				t.Fatalf("trial %d: reused Prune differs", trial)
+			}
+		}
+	}
+	if singular == 0 || singular == trials {
+		t.Errorf("%d/%d singular: both outcomes should occur", singular, trials)
 	}
 }

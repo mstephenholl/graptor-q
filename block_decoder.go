@@ -27,7 +27,26 @@ type BlockDecoder struct {
 
 	decoded bool
 	out     []byte // K*T bytes of decoded source symbols
-	work    []byte // intermediate symbols, kept for reuse after Reset
+
+	// Memory reused by every decode, so that decoding after Reset does not
+	// allocate.
+	work []byte // intermediate symbols
+	ws   solver.Workspace
+	scr  struct {
+		isis, want, missing []uint32
+		in                  [][]byte
+		units, ck, buf      []byte
+		rows, rhs           [][]byte
+	}
+}
+
+// resize returns s with length n, reusing its memory when it is large
+// enough. The contents are unspecified.
+func resize[T any](s []T, n int) []T {
+	if cap(s) < n {
+		return make([]T, n)
+	}
+	return s[:n]
 }
 
 // NewBlockDecoder returns a decoder for a source block of length bytes split
@@ -151,9 +170,8 @@ func (d *BlockDecoder) Decode() error {
 	}
 
 	p := d.p
-	n := d.nsrc + (p.KPrime - d.k) + len(d.repESI)
-	isis := make([]uint32, 0, n)
-	in := make([][]byte, 0, n)
+	s := &d.scr
+	isis, in := s.isis[:0], s.in[:0]
 	for i, off := range d.srcOff {
 		if off >= 0 {
 			isis = append(isis, uint32(i))
@@ -169,16 +187,17 @@ func (d *BlockDecoder) Decode() error {
 		isis = append(isis, esi+shift)
 		in = append(in, d.sym(d.repOff[i]))
 	}
-	missing := make([]uint32, 0, d.k-d.nsrc)
+	missing := s.missing[:0]
 	for i, off := range d.srcOff {
 		if off < 0 {
 			missing = append(missing, uint32(i))
 		}
 	}
+	s.isis, s.in, s.missing = isis, in, missing
 
 	// Only the intermediate symbols needed to rebuild the missing source
 	// symbols are computed.
-	plan, err := solver.NewPartialPlan(p, isis, missing)
+	plan, err := d.ws.NewPartialPlan(p, isis, missing)
 	if err != nil {
 		return &DecodeError{SBN: d.sbn, Received: d.Received(), Needed: d.k}
 	}
@@ -187,13 +206,13 @@ func (d *BlockDecoder) Decode() error {
 	}
 	work := d.work[:plan.Slots*d.t]
 	plan.ExecuteParallel(work, d.t, in, d.o.concurrency)
-	var cols []uint16
+	var cols [48]uint16
 	for i, off := range d.srcOff {
 		dst := out[i*d.t : (i+1)*d.t]
 		if off >= 0 {
 			copy(dst, d.sym(off))
 		} else {
-			cols = solver.EncodeSymbol(p, work, d.t, uint32(i), dst, cols)
+			solver.EncodeSymbol(p, work, d.t, uint32(i), dst, cols[:0])
 		}
 	}
 	d.out, d.decoded = out, true
@@ -252,21 +271,25 @@ func (d *BlockDecoder) decodeLowLoss(out []byte) bool {
 	m := d.k - d.nsrc
 	r := min(len(d.repESI), m+20)
 	shift := uint32(p.KPrime - d.k)
-	want := make([]uint32, r)
+	s := &d.scr
+	want := resize(s.want, r)
+	s.want = want
 	for j, esi := range d.repESI[:r] {
 		want[j] = esi + shift
 	}
-	plan := full.Prune(want)
+	plan := d.ws.Prune(full, want)
 
-	var missing []int
-	in := make([][]byte, p.KPrime) // padding symbols stay nil (zero)
+	missing := s.missing[:0]
+	in := resize(s.in, p.KPrime)
+	clear(in) // padding symbols stay nil (zero)
 	for i, off := range d.srcOff {
 		if off >= 0 {
 			in[i] = d.sym(off)
 		} else {
-			missing = append(missing, i)
+			missing = append(missing, uint32(i))
 		}
 	}
+	s.missing, s.in = missing, in
 
 	if n := plan.Slots * T; cap(d.work) < n {
 		d.work = make([]byte, n)
@@ -275,16 +298,20 @@ func (d *BlockDecoder) decodeLowLoss(out []byte) bool {
 	plan.ExecuteParallel(c0, T, in, d.o.concurrency)
 
 	clear(in)
-	units := make([]byte, m*m)
+	units := resize(s.units, m*m)
+	clear(units)
+	s.units = units
 	for k, i := range missing {
 		in[i] = units[k*m : (k+1)*m]
 		in[i][k] = 1
 	}
-	ck := make([]byte, plan.Slots*m)
+	ck := resize(s.ck, plan.Slots*m)
+	s.ck = ck
 	plan.Execute(ck, m, in)
 
-	buf := make([]byte, r*(m+T))
-	rows, rhs := make([][]byte, r), make([][]byte, r)
+	buf := resize(s.buf, r*(m+T))
+	rows, rhs := resize(s.rows, r), resize(s.rhs, r)
+	s.buf, s.rows, s.rhs = buf, rows, rhs
 	var cols [48]uint16
 	for j, isi := range want {
 		rows[j] = buf[j*(m+T) : j*(m+T)+m]
@@ -293,7 +320,7 @@ func (d *BlockDecoder) decodeLowLoss(out []byte) bool {
 		solver.EncodeSymbol(p, c0, T, isi, rhs[j], cols[:0])
 		gf256.AddSlice(rhs[j], d.sym(d.repOff[j]))
 	}
-	pivots, err := solver.SolveDense(rows, rhs, m)
+	pivots, err := d.ws.SolveDense(rows, rhs, m)
 	if err != nil {
 		return false
 	}
@@ -303,7 +330,7 @@ func (d *BlockDecoder) decodeLowLoss(out []byte) bool {
 		}
 	}
 	for k, i := range missing {
-		copy(out[i*T:(i+1)*T], rhs[pivots[k]])
+		copy(out[int(i)*T:int(i+1)*T], rhs[pivots[k]])
 	}
 	return true
 }

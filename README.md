@@ -29,6 +29,7 @@ object, err = dec.AppendObject(nil)
   - Encoding plans depend only on K', so they are cached and reused across blocks.
   - Decoders compute only the intermediate symbols needed for the missing source symbols.
   - When only a few source symbols are missing, decoders skip the symbolic solve entirely. They reuse the cached encoding plan and solve a small m×m system for the m missing symbols. This is 1.3–2.8× faster than the full solver and is chosen by a measured cost model.
+  - Decoders reuse all of their working memory: after `Reset`, decoding a block allocates nothing.
   - Large symbols are processed in parallel byte stripes.
 - **Kernels.**
 
@@ -88,10 +89,10 @@ repair symbols plus two.
 | encode | 1000 | 1280 | **1848** | 808 | 1079 |
 | encode | 10000 | 1280 | **887** | 482 | 635 |
 | encode | 50000 | 256 | **411** | 112 | 337 |
-| decode | 100 | 1280 | **1404** | 905 | 617 |
-| decode | 1000 | 1280 | **1038** | 744 | 545 |
-| decode | 10000 | 1280 | **614** | 459 | 369 |
-| decode | 50000 | 256 | **173** | 108 | 75 |
+| decode | 100 | 1280 | **1412** | 866 | 617 |
+| decode | 1000 | 1280 | **1166** | 716 | 545 |
+| decode | 10000 | 1280 | **612** | 450 | 369 |
+| decode | 50000 | 256 | **177** | 107 | 75 |
 
 Reproduce with `make bench-compare CPU=<a performance core>`. With
 `WithConcurrency(n)`, a large block is processed in parallel byte stripes; this

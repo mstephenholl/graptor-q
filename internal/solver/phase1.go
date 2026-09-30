@@ -33,6 +33,7 @@ type phase1 struct {
 	chosen   []bool   // per row: chosen as a pivot
 	uCols    []uint16 // inactive columns: phase-1 inactivations, then the P PI columns
 	uIdx     []int32  // U index per column, -1 if not in U
+	vcols    []uint16 // scratch
 
 	// bucket queue of unchosen rows by their number of nonzeros in V
 	vdeg       []int32
@@ -62,23 +63,28 @@ type phase1 struct {
 }
 
 func runPhase1(rs *rowSet) *phase1 {
+	ph := new(phase1)
+	ph.run(rs)
+	return ph
+}
+
+// run performs phase 1 on rs, reusing the memory of ph.
+func (ph *phase1) run(rs *rowSet) {
 	p := rs.p
 	W, L := p.W, p.L
 	n := rs.nrows()
-	ph := &phase1{
-		rs:       rs,
-		colState: make([]uint8, L),
-		colPiv:   make([]int32, L),
-		chosen:   make([]bool, n),
-		vdeg:     make([]int32, n),
-		next:     make([]int32, n),
-		prev:     make([]int32, n),
-		pivRow:   make([]int32, 0, W),
-		pivCol:   make([]uint16, 0, W),
-	}
-	for c := range ph.colPiv {
-		ph.colPiv[c] = -1
-	}
+	ph.rs = rs
+	ph.colState = zeroed(ph.colState, L)
+	ph.colPiv = filled(ph.colPiv, L, -1)
+	ph.chosen = zeroed(ph.chosen, n)
+	ph.vdeg = resize(ph.vdeg, n)
+	ph.next = resize(ph.next, n) // set when a row is inserted
+	ph.prev = resize(ph.prev, n)
+	ph.pivRow = ph.pivRow[:0]
+	ph.pivCol = ph.pivCol[:0]
+	ph.uCols = ph.uCols[:0]
+	ph.haveComp = false
+	ph.compNext, ph.compPos, ph.builtTwos, ph.newTwos = 0, 0, 0, 0
 	for c := W; c < L; c++ {
 		ph.colState[c] = colInactive
 	}
@@ -94,10 +100,7 @@ func runPhase1(rs *rowSet) *phase1 {
 		ph.vdeg[r] = d
 		maxDeg = max(maxDeg, d)
 	}
-	ph.head = make([]int32, maxDeg+1)
-	for i := range ph.head {
-		ph.head[i] = -1
-	}
+	ph.head = filled(ph.head, int(maxDeg)+1, -1)
 	// Insert in reverse so that each bucket lists rows in increasing order.
 	for r := n - 1; r >= 0; r-- {
 		if ph.vdeg[r] > 0 {
@@ -106,8 +109,6 @@ func runPhase1(rs *rowSet) *phase1 {
 	}
 	ph.minR = 1
 
-	var inactLT []uint16
-	var vcols []uint16
 	remaining := W
 	for remaining > 0 {
 		for ph.minR < len(ph.head) && ph.head[ph.minR] < 0 {
@@ -119,7 +120,7 @@ func runPhase1(rs *rowSet) *phase1 {
 			for c := range W {
 				if ph.colState[c] == colV {
 					ph.colState[c] = colInactive
-					inactLT = append(inactLT, uint16(c))
+					ph.uCols = append(ph.uCols, uint16(c))
 				}
 			}
 			break
@@ -135,12 +136,13 @@ func runPhase1(rs *rowSet) *phase1 {
 			row = ph.minDegreeRow(r)
 		}
 
-		vcols = vcols[:0]
+		vcols := ph.vcols[:0]
 		for _, c := range rs.row(int(row)) {
 			if int(c) < W && ph.colState[c] == colV {
 				vcols = append(vcols, c)
 			}
 		}
+		ph.vcols = vcols
 		// The pivot is the column appearing in the fewest rows; the others
 		// are inactivated, which lowers r for as many rows as possible.
 		best := 0
@@ -161,25 +163,21 @@ func runPhase1(rs *rowSet) *phase1 {
 		for i, c := range vcols {
 			if i != best {
 				ph.colState[c] = colInactive
-				inactLT = append(inactLT, c)
+				ph.uCols = append(ph.uCols, c)
 				ph.leaveV(c)
 			}
 		}
 		remaining -= len(vcols)
 	}
 
-	ph.uCols = inactLT
+	// U: the columns inactivated above, then the P PI columns.
 	for c := W; c < L; c++ {
 		ph.uCols = append(ph.uCols, uint16(c))
 	}
-	ph.uIdx = make([]int32, L)
-	for c := range ph.uIdx {
-		ph.uIdx[c] = -1
-	}
+	ph.uIdx = filled(ph.uIdx, L, -1)
 	for i, c := range ph.uCols {
 		ph.uIdx[c] = int32(i)
 	}
-	return ph
 }
 
 // leaveV updates the V degrees of the unchosen rows containing column c,
@@ -275,12 +273,17 @@ func (ph *phase1) nextComponentRow() int32 {
 
 func (ph *phase1) buildComponents() {
 	W := ph.rs.p.W
-	if ph.ufParent == nil {
+	if len(ph.ufParent) < W { // a reused phase1 may have served a smaller K'
 		ph.ufParent = make([]int32, W)
 		ph.ufSize = make([]int32, W)
 		ph.ufStamp = make([]uint32, W)
+		ph.ufComp = make([]int32, W)
 	}
 	ph.ufGen++
+	if ph.ufGen == 0 { // wrapped around: stale stamps could match
+		clear(ph.ufStamp)
+		ph.ufGen = 1
+	}
 	ph.pairs = ph.pairs[:0]
 	for r := ph.head[2]; r >= 0; r = ph.next[r] {
 		var ends [2]int32
@@ -308,9 +311,6 @@ func (ph *phase1) buildComponents() {
 	// the components by decreasing size.
 	// ufComp[root] is the component index of a root; a root is new to this
 	// build when its ufSize is still positive (it is negated once indexed).
-	if ph.ufComp == nil {
-		ph.ufComp = make([]int32, W)
-	}
 	comps := ph.comps[:0]
 	for i := 0; i < len(ph.pairs); i += 2 {
 		root := ph.find(ph.pairs[i+1])

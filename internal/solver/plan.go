@@ -1,6 +1,7 @@
 package solver
 
 import (
+	"slices"
 	"sync"
 
 	"github.com/mholland/graptorq/internal/gf256"
@@ -54,19 +55,13 @@ func NewPlan(p *rfc.Params, isis []uint32) (*Plan, error) {
 // internal symbol IDs in want (all of them if want is nil). A decoder that
 // only lacks a few source symbols needs a small fraction of the work.
 func NewPartialPlan(p *rfc.Params, isis []uint32, want []uint32) (*Plan, error) {
-	if len(isis) < p.KPrime {
-		return nil, ErrSingular
-	}
-	ph := runPhase1(newRowSet(p, isis))
-	p2, err := runPhase2(ph)
+	var w Workspace
+	pl, err := w.NewPartialPlan(p, isis, want)
 	if err != nil {
 		return nil, err
 	}
-	pl := assemble(ph, p2, len(isis))
-	if want != nil {
-		pl = pl.Prune(want)
-	}
-	return pl, nil
+	q := *pl // detach from the workspace, whose scratch memory can then be freed
+	return &q, nil
 }
 
 // Prune returns a plan that only computes the intermediate symbols needed to
@@ -78,46 +73,16 @@ func NewPartialPlan(p *rfc.Params, isis []uint32, want []uint32) (*Plan, error) 
 // columns of U (which the preceding instructions always compute), so walking
 // it backwards propagates the need for a column to everything it reads.
 func (pl *Plan) Prune(want []uint32) *Plan {
-	p := pl.Params
-	need := make([]bool, pl.Slots)
-	var cols []uint16
-	for _, x := range want {
-		cols = p.AppendEncCols(cols[:0], x)
-		for _, c := range cols {
-			need[c] = true
-		}
-	}
-	tail := pl.instrs[pl.n4:]
-	keep := make([]bool, len(tail))
-	kept := 0
-	for i := len(tail) - 1; i >= 0; i-- {
-		if ins := &tail[i]; need[ins.dst] {
-			keep[i] = true
-			kept++
-			for _, a := range pl.args[ins.a0:ins.a1] {
-				need[a] = true
-			}
-		}
-	}
-	q := *pl
-	q.instrs = make([]instr, pl.n4, pl.n4+kept)
-	copy(q.instrs, pl.instrs[:pl.n4])
-	for i, k := range keep {
-		if k {
-			q.instrs = append(q.instrs, tail[i])
-		}
-	}
+	var w Workspace
+	q := *w.Prune(pl, want)
 	return &q
 }
 
 // Solvable reports whether the constraint matrix for isis has full rank,
 // without building a plan.
 func Solvable(p *rfc.Params, isis []uint32) bool {
-	if len(isis) < p.KPrime {
-		return false
-	}
-	_, err := runPhase2(runPhase1(newRowSet(p, isis)))
-	return err == nil
+	var w Workspace
+	return w.Solvable(p, isis)
 }
 
 // Size returns the approximate memory footprint of the plan in bytes.
@@ -135,16 +100,18 @@ func (pl *Plan) emit(kind opKind, c byte, dst int, src int32, args ...uint16) {
 	pl.instrs = append(pl.instrs, instr{kind: kind, c: c, dst: uint16(dst), src: src, a0: a0, a1: uint32(len(pl.args))})
 }
 
-// assemble emits the plan.
-func assemble(ph *phase1, p2 *phase2, inputs int) *Plan {
+// assemble emits the plan into pl, reusing its memory.
+func (pl *Plan) assemble(ph *phase1, p2 *phase2, inputs int) {
 	rs := ph.rs
 	p := rs.p
 	L := p.L
 	z := L // scratch slot for the HDPC recurrence
-	pl := &Plan{Params: p, Slots: L + 1, Inputs: inputs}
 	n := p.KPrime + p.S
-	pl.instrs = make([]instr, 0, 2*len(ph.pivRow)+len(p2.cand)+p.H+3*n+len(p2.ops))
-	pl.args = make([]uint16, 0, 2*len(rs.cols)+2*n+len(p2.ops))
+	*pl = Plan{
+		Params: p, Slots: L + 1, Inputs: inputs,
+		instrs: slices.Grow(pl.instrs[:0], 2*len(ph.pivRow)+len(p2.cand)+p.H+3*n+len(p2.ops)),
+		args:   slices.Grow(pl.args[:0], 2*len(rs.cols)+2*n+len(p2.ops)),
+	}
 
 	// slot of phase-2 row: the U column whose value it holds at the end.
 	slot := func(row int32) int { return int(ph.uCols[p2.rowCol[row]]) }
@@ -176,7 +143,7 @@ func assemble(ph *phase1, p2 *phase2, inputs int) *Plan {
 
 	// N2: right-hand sides of the used HDPC rows, G_HDPC * y.
 	H := p.H
-	hslot := make([]int, H)
+	var hslot [16]int // H <= 16 for every row of Table 2
 	anyLive := false
 	for h := range H {
 		hslot[h] = -1
@@ -243,7 +210,6 @@ func assemble(ph *phase1, p2 *phase2, inputs int) *Plan {
 		}
 		pl.emitFrom(opSet, int(ph.pivCol[i]), rs.input(int(r)), a0)
 	}
-	return pl
 }
 
 // Execute runs the plan. work must hold at least Slots*T bytes; in holds
@@ -289,7 +255,8 @@ func (pl *Plan) ExecuteRange(work []byte, T int, in [][]byte, lo, hi int) {
 		o := s * T
 		return work[o+lo : o+hi : o+hi]
 	}
-	var srcs [][]byte // operands of the fused XORs, reused
+	sp := srcsPool.Get().(*[][]byte)
+	srcs := (*sp)[:0] // operands of the fused XORs
 	for i := range pl.instrs {
 		ins := &pl.instrs[i]
 		dst := sym(int(ins.dst))
@@ -318,4 +285,9 @@ func (pl *Plan) ExecuteRange(work []byte, T int, in [][]byte, lo, hi int) {
 			gf256.ScaleAdd(dst, sym(int(ins.src)), ins.c)
 		}
 	}
+	clear(srcs[:cap(srcs)]) // do not keep symbol memory alive from the pool
+	*sp = srcs[:0]
+	srcsPool.Put(sp)
 }
+
+var srcsPool = sync.Pool{New: func() any { return new([][]byte) }}

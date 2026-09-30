@@ -33,15 +33,21 @@ type rowSet struct {
 	// CSC view of the LT columns (< W): rows containing each column.
 	cstart []int32 // len W+1
 	crows  []int32
+	fill   []int32 // scratch
 }
 
 func newRowSet(p *rfc.Params, isis []uint32) *rowSet {
-	n := p.S + len(isis)
-	rs := &rowSet{p: p, start: make([]int32, 1, n+1)}
-	rs.cols = make([]uint16, 0, 3*p.B+3*p.S+len(isis)*8)
+	rs := new(rowSet)
+	rs.build(p, isis)
+	return rs
+}
+
+// build fills rs for the given rows, reusing its memory.
+func (rs *rowSet) build(p *rfc.Params, isis []uint32) {
+	rs.p = p
 	ldpc := ldpcRows(p)
-	rs.cols = append(rs.cols, ldpc.cols...)
-	rs.start = append(rs.start, ldpc.start[1:]...)
+	rs.start = append(rs.start[:0], ldpc.start...)
+	rs.cols = append(rs.cols[:0], ldpc.cols...)
 	for _, x := range isis {
 		// LT row columns are always distinct, so no cancellation is needed.
 		rs.cols = p.AppendEncCols(rs.cols, x)
@@ -49,7 +55,7 @@ func newRowSet(p *rfc.Params, isis []uint32) *rowSet {
 	}
 
 	W := p.W
-	rs.cstart = make([]int32, W+1)
+	rs.cstart = zeroed(rs.cstart, W+1)
 	for _, c := range rs.cols {
 		if int(c) < W {
 			rs.cstart[c+1]++
@@ -58,18 +64,17 @@ func newRowSet(p *rfc.Params, isis []uint32) *rowSet {
 	for c := range W {
 		rs.cstart[c+1] += rs.cstart[c]
 	}
-	rs.crows = make([]int32, rs.cstart[W])
-	fill := make([]int32, W)
-	copy(fill, rs.cstart[:W])
+	rs.crows = resize(rs.crows, int(rs.cstart[W]))
+	rs.fill = resize(rs.fill, W)
+	copy(rs.fill, rs.cstart[:W])
 	for r := range rs.nrows() {
 		for _, c := range rs.row(r) {
 			if int(c) < W {
-				rs.crows[fill[c]] = int32(r)
-				fill[c]++
+				rs.crows[rs.fill[c]] = int32(r)
+				rs.fill[c]++
 			}
 		}
 	}
-	return rs
 }
 
 // csr is a list of rows of column indices.

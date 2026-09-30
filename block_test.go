@@ -369,3 +369,57 @@ func TestDecodePathsAgree(t *testing.T) {
 	}
 	lowLossMode = 0
 }
+
+// After warm-up, decoding again after Reset must not allocate, on both
+// decoding paths (with a single goroutine).
+func TestDecodeNoAlloc(t *testing.T) {
+	if raceEnabled {
+		t.Skip("allocation counts are not meaningful with the race detector")
+	}
+	for _, c := range []struct {
+		name       string
+		K, T, lost int
+		lowLoss    bool
+	}{
+		{"low-loss", 1000, 64, 5, true},
+		{"full-solver", 1000, 64, 300, false},
+		{"full-solver-large", 10000, 16, 1500, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			data := testutil.PatternData(c.K*c.T, 1)
+			enc, _ := NewBlockEncoder(data, c.T)
+			dec, _ := NewBlockDecoder(len(data), c.T, WithConcurrency(1))
+			if got := lowLossWorthIt(dec.p.KPrime, c.T, c.lost); got != c.lowLoss {
+				t.Fatalf("expected low-loss path %v, cost model says %v", c.lowLoss, got)
+			}
+			var esis []uint32
+			var syms [][]byte
+			for i := c.lost; i < c.K; i++ {
+				s, _ := enc.AppendSymbol(nil, uint32(i))
+				esis, syms = append(esis, uint32(i)), append(syms, s)
+			}
+			for i := range c.lost + 2 {
+				s, _ := enc.AppendSymbol(nil, uint32(c.K+i))
+				esis, syms = append(esis, uint32(c.K+i)), append(syms, s)
+			}
+			var err error
+			run := func() {
+				dec.Reset()
+				for i, s := range syms {
+					dec.AddSymbol(esis[i], s)
+				}
+				err = dec.Decode()
+			}
+			run() // warm up buffers and the plan cache
+			if run(); err != nil {
+				t.Fatal(err)
+			}
+			if n := testing.AllocsPerRun(10, run); n != 0 || err != nil {
+				t.Errorf("decode allocates %.0f times (err %v)", n, err)
+			}
+			if got, _ := dec.AppendSource(nil); !bytes.Equal(got, data) {
+				t.Fatal("wrong data")
+			}
+		})
+	}
+}
