@@ -140,7 +140,7 @@ func refMulAdd(dst, src []byte, c byte) {
 
 var testLengths = func() []int {
 	var n []int
-	for i := 0; i <= 260; i++ {
+	for i := range 261 {
 		n = append(n, i)
 	}
 	return append(n, 511, 512, 513, 1023, 1280, 4096+13, 65536+7)

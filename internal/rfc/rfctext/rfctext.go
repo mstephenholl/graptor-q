@@ -128,7 +128,7 @@ func numberList(lines []string, prefix string) ([]uint64, error) {
 		if !numberLineRE.MatchString(l) {
 			continue
 		}
-		for _, f := range strings.Split(l, ",") {
+		for f := range strings.SplitSeq(l, ",") {
 			f = strings.TrimSpace(f)
 			if f == "" {
 				continue
@@ -158,7 +158,7 @@ func tableRows(lines []string, prefix string) ([][]int, error) {
 		}
 		var row []int
 		numeric := true
-		for _, cell := range strings.Split(strings.Trim(l, "|"), "|") {
+		for cell := range strings.SplitSeq(strings.Trim(l, "|"), "|") {
 			cell = strings.TrimSpace(cell)
 			if cell == "" {
 				continue

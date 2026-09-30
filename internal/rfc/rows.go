@@ -51,7 +51,7 @@ func (p *Params) LDPCRows() [][]uint16 {
 	for i := range rows {
 		rows[i] = append(rows[i], uint16(p.B+i))
 	}
-	for i := 0; i < p.B; i++ {
+	for i := range p.B {
 		a := 1 + i/p.S
 		b := i % p.S
 		rows[b] = append(rows[b], uint16(i))
@@ -60,7 +60,7 @@ func (p *Params) LDPCRows() [][]uint16 {
 		b = (b + a) % p.S
 		rows[b] = append(rows[b], uint16(i))
 	}
-	for i := 0; i < p.S; i++ {
+	for i := range p.S {
 		a := i % p.P
 		b := (i + 1) % p.P
 		rows[i] = append(rows[i], uint16(p.W+a), uint16(p.W+b))

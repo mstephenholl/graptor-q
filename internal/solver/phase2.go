@@ -3,6 +3,7 @@ package solver
 import (
 	"encoding/binary"
 	"math/bits"
+	"slices"
 
 	"github.com/mholland/graptorq/internal/gf256"
 	"github.com/mholland/graptorq/internal/rfc"
@@ -161,8 +162,7 @@ func (p2 *phase2) run(ph *phase1) error {
 	}
 
 	// Back substitution through the binary pivot rows, last pivot first.
-	for k := len(order) - 1; k >= 0; k-- {
-		r := order[k]
+	for _, r := range slices.Backward(order) {
 		c := int(p2.rowCol[r])
 		rb := candBits[int(r)*words : int(r+1)*words]
 		a0 := int32(len(args))

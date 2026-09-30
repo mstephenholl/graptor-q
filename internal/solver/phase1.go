@@ -234,8 +234,7 @@ func (ph *phase1) top(d int) int32 {
 func (ph *phase1) minDegreeRow(r int) int32 {
 	best, bestDeg := int32(-1), int32(0)
 	b := ph.bucket[r]
-	for i := len(b) - 1; i >= 0; i-- {
-		x := b[i]
+	for _, x := range slices.Backward(b) {
 		if !ph.valid(x, r) {
 			continue
 		}
@@ -297,8 +296,7 @@ func (ph *phase1) buildComponents() {
 	}
 	ph.pairs = ph.pairs[:0]
 	b := ph.bucket[2]
-	for i := len(b) - 1; i >= 0; i-- {
-		r := b[i]
+	for _, r := range slices.Backward(b) {
 		if !ph.valid(r, 2) {
 			continue
 		}

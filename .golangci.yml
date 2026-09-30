@@ -17,6 +17,12 @@ linters:
     - copyloopvar
     - durationcheck
     - reassign
+    - modernize
+    - exptostd
+    - intrange
+    - usestdlibvars
+    - exhaustive
+    - nolintlint
 
 issues:
   # Report every finding. The defaults hide all but three of each kind.

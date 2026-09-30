@@ -110,19 +110,17 @@ func TestXssnickCrossDecode(t *testing.T) {
 		// xssnick encodes, graptorq decodes.
 		xe, _ := xraptorq.NewRaptorQ(uint32(T)).CreateEncoder(data)
 		gd, _ := graptorq.NewBlockDecoder(len(data), T)
-		esi := uint32(0)
-		for ; esi < uint32(K); esi++ {
+		for esi := range uint32(K) {
 			if rng.Float64() >= loss {
 				if _, err := gd.AddSymbol(esi, xe.GenSymbol(esi)); err != nil {
 					t.Fatal(err)
 				}
 			}
 		}
-		for gd.Received() < K+2 {
+		for esi := uint32(K); gd.Received() < K+2; esi++ {
 			if _, err := gd.AddSymbol(esi, xe.GenSymbol(esi)); err != nil {
 				t.Fatal(err)
 			}
-			esi++
 		}
 		if err := gd.Decode(); err != nil {
 			t.Fatalf("trial %d: graptorq failed on xssnick symbols (K=%d, T=%d): %v", trial, K, T, err)
@@ -138,7 +136,7 @@ func TestXssnickCrossDecode(t *testing.T) {
 			t.Fatal(err)
 		}
 		received := 0
-		for esi = 0; esi < uint32(K); esi++ {
+		for esi := range uint32(K) {
 			if rng.Float64() >= loss {
 				sym, _ := ge.AppendSymbol(nil, esi)
 				if _, err := xd.AddSymbol(esi, sym); err != nil {
@@ -147,7 +145,7 @@ func TestXssnickCrossDecode(t *testing.T) {
 				received++
 			}
 		}
-		for ; ; esi++ {
+		for esi := uint32(K); ; esi++ {
 			sym, _ := ge.AppendSymbol(nil, esi)
 			if ready, _ := xd.AddSymbol(esi, sym); ready {
 				received++

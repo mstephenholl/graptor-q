@@ -30,10 +30,10 @@ func Matrix(p *rfc.Params, isis []uint32) [][]byte {
 	}
 
 	// LDPC: D[i] = C[B+i] initially, then the two loops of Section 5.3.3.3.
-	for i := 0; i < S; i++ {
+	for i := range S {
 		A[i][B+i] ^= 1
 	}
-	for i := 0; i < B; i++ {
+	for i := range B {
 		a := 1 + i/S
 		b := i % S
 		A[b][i] ^= 1
@@ -42,7 +42,7 @@ func Matrix(p *rfc.Params, isis []uint32) [][]byte {
 		b = (b + a) % S
 		A[b][i] ^= 1
 	}
-	for i := 0; i < S; i++ {
+	for i := range S {
 		a := i % P
 		b := (i + 1) % P
 		A[i][W+a] ^= 1
@@ -55,17 +55,17 @@ func Matrix(p *rfc.Params, isis []uint32) [][]byte {
 	for i := range MT {
 		MT[i] = make([]byte, n)
 	}
-	for j := 0; j < n-1; j++ {
+	for j := range n - 1 {
 		r := rfc.Rand(uint32(j+1), 6, uint32(H))
 		MT[r][j] = 1
 		MT[(r+rfc.Rand(uint32(j+1), 7, uint32(H-1))+1)%uint32(H)][j] = 1
 	}
-	for i := 0; i < H; i++ {
+	for i := range H {
 		MT[i][n-1] = gf256.Exp(i)
 	}
-	for h := 0; h < H; h++ {
+	for h := range H {
 		row := A[S+h]
-		for i := 0; i < n; i++ { // GAMMA[i][j] = alpha^(i-j) for i >= j
+		for i := range n { // GAMMA[i][j] = alpha^(i-j) for i >= j
 			if MT[h][i] == 0 {
 				continue
 			}
@@ -124,7 +124,7 @@ func Solve(A [][]byte, D [][]byte) ([][]byte, error) {
 		a[i] = append([]byte(nil), A[i]...)
 		d[i] = append([]byte(nil), D[i]...)
 	}
-	for col := 0; col < L; col++ {
+	for col := range L {
 		piv := -1
 		for r := col; r < len(a); r++ {
 			if a[r][col] != 0 {
