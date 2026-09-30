@@ -253,6 +253,66 @@ func TestRaptorgoCrossDecode(t *testing.T) {
 	}
 }
 
+// Asked to, raptorgo leaves out the padding at the end of every source symbol
+// that ends with padding (RFC 6330 Section 4.4.2): with sub-blocks, several
+// symbols of the last source block can. graptorq must restore it. Other source
+// packets are lost at random, so decoding needs the restored symbols in the
+// solve.
+func TestRaptorgoShortenedPackets(t *testing.T) {
+	rng := rand.New(rand.NewPCG(47, 48))
+	shortened := 0
+	for i, oti := range testOTIs(rng, 20) {
+		data := testutil.PatternData(int(oti.TransferLength), uint64(i))
+		re, err := rg.NewObjectEncoder(data, rgOTI(oti), rg.RFCWireLimits())
+		if err != nil {
+			t.Fatal(err)
+		}
+		gd, err := graptorq.NewDecoder(oti)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l, err := oti.Layout()
+		if err != nil {
+			t.Fatal(err)
+		}
+		// send sends a packet, except that whole source packets are lost
+		// with probability lose.
+		send := func(sbn uint8, esi uint32, lose float64) {
+			pkt, err := re.Packet(sbn, esi, 1, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(pkt) < graptorq.PayloadIDSize+l.SymbolSize {
+				shortened++
+			} else if rng.Float64() < lose {
+				return
+			}
+			if _, err := gd.AddPacket(pkt); err != nil {
+				t.Fatalf("%+v SBN=%d ESI=%d: %v", oti, sbn, esi, err)
+			}
+		}
+		for sbn := range uint8(l.SourceBlocks()) {
+			K := uint32(l.Block(sbn).K)
+			for esi := range K {
+				send(sbn, esi, 0.2)
+			}
+			for esi := K; ; esi++ {
+				if b, _ := gd.Block(sbn); b.Decoded() {
+					break
+				}
+				send(sbn, esi, 0)
+			}
+		}
+		if got, err := gd.AppendObject(nil); err != nil || !bytes.Equal(got, data) {
+			t.Fatalf("%+v: graptorq decoded shortened raptorgo packets incorrectly (%v)", oti, err)
+		}
+	}
+	if shortened == 0 {
+		t.Fatal("raptorgo shortened no packet")
+	}
+	t.Logf("%d shortened packets", shortened)
+}
+
 // benchRaptorgo adds raptorgo's object benchmarks to BenchmarkCmp: pkts are
 // the single-symbol packets of the decode benchmark.
 func benchRaptorgo(b *testing.B, name string, K int, oti graptorq.OTI, data []byte, pkts [][]byte) {

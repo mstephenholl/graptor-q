@@ -145,6 +145,132 @@ func TestGatherScatter(t *testing.T) {
 	if !bytes.Equal(sym, want) {
 		t.Fatalf("gather short = %v, want %v", sym, want)
 	}
+	// Both symbols end with padding, which spans two sub-symbols in symbol 1.
+	b := BlockInfo{K: 2, Length: 11}
+	if p0, p1 := l.trailingPadding(b, 0), l.trailingPadding(b, 1); p0 != 2 || p1 != 3 {
+		t.Fatalf("trailing padding = %d, %d; want 2, 3", p0, p1)
+	}
+}
+
+// trailingPadding must count the zero octets that gather leaves at the end of
+// each symbol of a block of nonzero object data.
+func TestTrailingPadding(t *testing.T) {
+	rng := rand.New(rand.NewPCG(115, 116))
+	inner, spanning := 0, 0
+	for trial := range 600 {
+		oti := randomOTI(rng)
+		if trial%2 == 0 { // small objects: blocks of a few symbols
+			oti.TransferLength = 1 + rng.Uint64N(4*uint64(oti.SymbolSize))
+			oti.SourceBlocks = 1
+		}
+		l, err := oti.Layout()
+		if err != nil {
+			t.Fatalf("%+v: %v", oti, err)
+		}
+		T := l.SymbolSize
+		for sbn := range l.SourceBlocks() {
+			b := l.Block(uint8(sbn))
+			syms := make([]byte, b.K*T)
+			l.gather(syms, bytes.Repeat([]byte{0xff}, int(b.Length)), b.K)
+			for m := range b.K {
+				want := T - len(bytes.TrimRight(syms[m*T:(m+1)*T], "\x00"))
+				got := l.trailingPadding(b, m)
+				if got != want {
+					t.Fatalf("%+v block %d symbol %d: trailing padding %d, want %d", oti, sbn, m, got, want)
+				}
+				if got > 0 && m < b.K-1 {
+					inner++
+				}
+				if got > l.TS {
+					spanning++
+				}
+			}
+		}
+	}
+	if inner == 0 || spanning == 0 {
+		t.Fatalf("padding before the last symbol: %d cases, across sub-symbols: %d cases", inner, spanning)
+	}
+}
+
+// A source packet may leave out padding octets at the end of its last symbol
+// (RFC 6330 Section 4.4.2), but not object data, and repair packets must be
+// whole. Other source packets are lost, so decoding needs the restored
+// symbols in the solve.
+func TestShortenedPackets(t *testing.T) {
+	rng := rand.New(rand.NewPCG(117, 118))
+	for _, oti := range []OTI{
+		{TransferLength: 10_001, SymbolSize: 64, SourceBlocks: 1, SubBlocks: 1, Alignment: 4},
+		{TransferLength: 40_001, SymbolSize: 48, SourceBlocks: 2, SubBlocks: 3, Alignment: 4},
+		{TransferLength: 21, SymbolSize: 32, SourceBlocks: 1, SubBlocks: 4, Alignment: 4},
+	} {
+		data := randomData(rng, oti.TransferLength)
+		enc, err := NewEncoder(data, oti)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dec, err := NewDecoder(oti)
+		if err != nil {
+			t.Fatal(err)
+		}
+		add := func(pkt []byte) {
+			t.Helper()
+			if _, err := dec.AddPacket(pkt); err != nil {
+				t.Fatalf("%+v: %v", oti, err)
+			}
+		}
+		reject := func(pkt []byte, want error) {
+			t.Helper()
+			if _, err := dec.AddPacket(pkt); !errors.Is(err, want) {
+				t.Fatalf("%+v: AddPacket = %v, want %v", oti, err, want)
+			}
+		}
+		l := enc.Layout()
+		shortened := 0
+		for sbn := range l.SourceBlocks() {
+			b := l.Block(uint8(sbn))
+			for esi := range uint32(b.K) {
+				pkt, _ := enc.AppendPacket(nil, PayloadID{uint8(sbn), esi})
+				pad := l.trailingPadding(b, int(esi))
+				if pad == 0 {
+					reject(pkt[:len(pkt)-1], ErrSymbolSize)
+					if rng.IntN(4) != 0 {
+						add(pkt)
+					}
+					continue
+				}
+				reject(pkt[:len(pkt)-pad-1], ErrSymbolSize) // drops object data
+				add(pkt[:len(pkt)-pad])
+				shortened++
+			}
+			repair, _ := enc.AppendPacket(nil, PayloadID{uint8(sbn), uint32(b.K)})
+			reject(repair[:len(repair)-1], ErrSymbolSize)
+			for esi := uint32(b.K); ; esi++ {
+				if blk, _ := dec.Block(uint8(sbn)); blk.Decoded() {
+					break
+				}
+				pkt, _ := enc.AppendPacket(nil, PayloadID{uint8(sbn), esi})
+				add(pkt)
+			}
+		}
+		if shortened == 0 {
+			t.Fatalf("%+v: no symbol ends with padding", oti)
+		}
+		if got, err := dec.AppendObject(nil); err != nil || !bytes.Equal(got, data) {
+			t.Fatalf("%+v: decoded object differs (%v)", oti, err)
+		}
+
+		// A shortened group of symbols, and a shortened packet for a source
+		// block that does not exist.
+		last := l.Block(uint8(l.SourceBlocks() - 1))
+		pad := l.trailingPadding(last, last.K-1)
+		first := PayloadID{last.SBN, uint32(max(last.K-3, 0))}
+		group, _ := first.AppendBinary(nil)
+		group, _ = enc.AppendSymbols(group, first, last.K-int(first.ESI))
+		dec.Reset()
+		add(group[:len(group)-pad])
+		bad, _ := PayloadID{uint8(l.SourceBlocks()), 0}.AppendBinary(nil)
+		reject(append(bad, make([]byte, l.SymbolSize-1)...), ErrSBNRange)
+	}
 }
 
 func randomOTI(rng *rand.Rand) OTI {

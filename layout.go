@@ -74,6 +74,28 @@ func (l *Layout) subBlocks(f func(size, off int)) {
 	}
 }
 
+// trailingPadding returns how many octets at the end of source symbol m of b
+// are padding rather than object data. The object is padded to Kt*T octets at
+// the end of its last source block (RFC 6330 Section 4.4.1.2); with
+// sub-blocks, that padding can reach the end of several symbols.
+func (l *Layout) trailingPadding(b BlockInfo, m int) int {
+	pad := 0
+	for n := l.NL + l.NS - 1; n >= 0; n-- {
+		size, off := l.TL, n*l.TL
+		if n >= l.NL {
+			size, off = l.TS, l.NL*l.TL+(n-l.NL)*l.TS
+		}
+		// End of sub-symbol m of sub-block n within the block.
+		end := int64(b.K)*int64(off) + int64(m+1)*int64(size)
+		p := int(min(max(end-b.Length, 0), int64(size)))
+		pad += p
+		if p < size {
+			break
+		}
+	}
+	return pad
+}
+
 // gather converts a source block as laid out in the object (block, which may
 // be shorter than K*T: the rest is zero padding) into K contiguous symbols:
 // symbol m is the concatenation of sub-symbol m of every sub-block.

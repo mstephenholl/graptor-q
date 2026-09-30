@@ -27,6 +27,7 @@ object, err = dec.AppendObject(nil)
 - **Block-level API.** `BlockEncoder` and `BlockDecoder` work on a single source block with any symbol size.
 - **Packets and limits.**
   - `AppendSymbols` builds packets that carry several consecutive symbols (RFC 6330 §4.4.2), and `AppendRepair` generates the next n repair symbols of a block.
+  - `AddPacket` accepts source packets that leave out the padding at the end of their last symbol, as §4.4.2 allows. With sub-blocks, several symbols of the last source block can end with padding. Leaving out anything other than padding is rejected.
   - For untrusted input, `WithMaxOverhead` caps the symbols stored per block and `WithMaxMemory` caps each block's memory.
 - **Fast solver.**
   - Inactivation decoding is compiled into a straight-line *plan* of symbol operations.
@@ -63,7 +64,7 @@ object, err = dec.AppendObject(nil)
 | Live cberner interop (`make interop`) | Both directions, plus the first two repair symbols compared at **every K'** |
 | **xssnick/raptorq v1.5.2 differential** (`interop/`) | Identical symbols at 378 of 477 K'; cross-decoding in both directions (see the finding below) |
 | **takeyourhatoff/raptorq differential** (`interop/`) | Identical symbols at all 477 K', with and without its SIMD kernels. It derives from xssnick/raptorq but does not share its P1 deviation. Cross-decoding in both directions |
-| **fgn/raptorgo v0.1.1 differential** (`interop/`), an independent implementation with the object layer | Identical §4.3 derivations for 52,608 inputs. Byte-identical packets, single and grouped, source and repair, for 20 objects with Z up to 5, N up to 13 and Al from 1 to 8. Cross-decoding of whole objects in both directions |
+| **fgn/raptorgo v0.1.1 differential** (`interop/`), an independent implementation with the object layer | Identical §4.3 derivations for 52,608 inputs. Byte-identical packets, single and grouped, source and repair, for 20 objects with Z up to 5, N up to 13 and Al from 1 to 8. Cross-decoding of whole objects in both directions, including raptorgo's packets that leave out padding |
 | §5.8 recovery properties, with ESIs uniform over 0..2²⁴−1 (`make stat-long`) | Failures at K' symbols: 491/10⁵ = 0.49% (bound 1%). At K'+1: 4/(3×10⁵) = 1.3×10⁻⁵ (bound 10⁻⁴). At K'+2: 0/10⁶ (bound 10⁻⁶) |
 | Fuzzing: OTI parsing, garbage packets, block round trips | Robustness on untrusted input |
 | Platforms: amd64, `purego`, arm64 under qemu (a native arm64 CI job is configured but has not run yet), s390x (big-endian, qemu), 386 | Portability |
