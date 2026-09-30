@@ -79,24 +79,27 @@ round-trips with itself, but it does not interoperate at those block sizes.
 ## Performance
 
 Single core (Intel Core Ultra 7 155U P-core, GOMAXPROCS=1), MB/s of source
-data, median of 3 runs. Encode means building the encoder plus one repair
-symbol. Decode means 10% of the source symbols lost and replaced by that many
-repair symbols plus two.
+data, median of 5 runs.
+
+- **Encode:** build the encoder, then generate one repair symbol.
+- **Decode:** lose 10% of the source symbols, replace them with that many repair symbols plus two, decode, and deliver the block into a reused buffer (`AppendSource` for graptorq, `DecodeInto` for xssnick).
 
 | | K | T | graptorq | xssnick v1.5.2 | cberner 2.0.1 |
 |---|---:|---:|---:|---:|---:|
-| encode | 100 | 1280 | **2225** | 965 | 1445 |
-| encode | 1000 | 1280 | **1848** | 808 | 1079 |
-| encode | 10000 | 1280 | **887** | 482 | 635 |
-| encode | 50000 | 256 | **411** | 112 | 337 |
-| decode | 100 | 1280 | **1412** | 866 | 617 |
-| decode | 1000 | 1280 | **1166** | 716 | 545 |
-| decode | 10000 | 1280 | **612** | 450 | 369 |
-| decode | 50000 | 256 | **177** | 107 | 75 |
+| encode | 100 | 1280 | **2686** | 877 | 1445 |
+| encode | 1000 | 1280 | **2544** | 748 | 1079 |
+| encode | 10000 | 1280 | **1011** | 478 | 635 |
+| encode | 50000 | 256 | **513** | 107 | 337 |
+| decode | 100 | 1280 | **1972** | 878 | 617 |
+| decode | 1000 | 1280 | **1374** | 795 | 545 |
+| decode | 10000 | 1280 | **684** | 461 | 369 |
+| decode | 50000 | 256 | **212** | 106 | 75 |
 
-Reproduce with `make bench-compare CPU=<a performance core>`. With
-`WithConcurrency(n)`, a large block is processed in parallel byte stripes; this
-gives +40–75% for encode with 4 goroutines at T=1280.
+The cberner figures come from an earlier run with its own benchmark (`rqoracle bench`).
+Reproduce everything with `make bench-compare CPU=<a performance core>`.
+
+With `WithConcurrency(n)`, a large block is processed in parallel byte
+stripes, which adds 40–75% for encode with 4 goroutines at T=1280.
 
 ## Repository layout
 

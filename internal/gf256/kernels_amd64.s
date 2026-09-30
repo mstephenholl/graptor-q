@@ -325,3 +325,39 @@ xn32store:
 xndone:
 	VZEROUPPER
 	RET
+
+// One step of the HDPC recurrence, 32 bytes at a time: z = alpha*z ^ y,
+// h1 ^= z, h2 ^= z. alpha*z doubles each byte (VPADDB) and XORs 0x1D into
+// the bytes whose high bit was set (VPCMPGTB against zero gives that mask).
+// h1 and h2 may be the same buffer.
+
+// func hdpcStepAVX2(z, y, h1, h2 *byte, n int)
+TEXT ·hdpcStepAVX2(SB), NOSPLIT, $0-40
+	MOVQ         z+0(FP), DI
+	MOVQ         y+8(FP), SI
+	MOVQ         h1+16(FP), R8
+	MOVQ         h2+24(FP), R9
+	MOVQ         n+32(FP), CX
+	MOVQ         $0x1d, AX
+	VMOVQ        AX, X7
+	VPBROADCASTB X7, Y7
+	VPXOR        Y6, Y6, Y6
+	XORQ         BX, BX
+
+hdloop:
+	VMOVDQU  (DI)(BX*1), Y0
+	VPCMPGTB Y0, Y6, Y1
+	VPADDB   Y0, Y0, Y0
+	VPAND    Y7, Y1, Y1
+	VPXOR    Y1, Y0, Y0
+	VPXOR    (SI)(BX*1), Y0, Y0
+	VMOVDQU  Y0, (DI)(BX*1)
+	VPXOR    (R8)(BX*1), Y0, Y2
+	VMOVDQU  Y2, (R8)(BX*1)
+	VPXOR    (R9)(BX*1), Y0, Y3
+	VMOVDQU  Y3, (R9)(BX*1)
+	ADDQ     $32, BX
+	CMPQ     BX, CX
+	JB       hdloop
+	VZEROUPPER
+	RET

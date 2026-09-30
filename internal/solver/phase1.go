@@ -35,11 +35,15 @@ type phase1 struct {
 	uIdx     []int32  // U index per column, -1 if not in U
 	vcols    []uint16 // scratch
 
-	// bucket queue of unchosen rows by their number of nonzeros in V
-	vdeg       []int32
-	next, prev []int32
-	head       []int32
-	minR       int
+	// Lazy bucket queue of unchosen rows by their number of nonzeros in V:
+	// bucket[d] is a stack of rows that had degree d when pushed. A row is
+	// pushed again when its degree drops, so an entry is stale (and skipped)
+	// if the row has been chosen or its degree has changed since. Within a
+	// bucket the valid entries, from the top, are the rows in the order they
+	// entered it, most recent first.
+	vdeg   []int32
+	bucket [][]int32
+	minR   int
 
 	// union-find scratch for the r = 2 rule
 	ufParent, ufSize []int32
@@ -78,8 +82,6 @@ func (ph *phase1) run(rs *rowSet) {
 	ph.colPiv = filled(ph.colPiv, L, -1)
 	ph.chosen = zeroed(ph.chosen, n)
 	ph.vdeg = resize(ph.vdeg, n)
-	ph.next = resize(ph.next, n) // set when a row is inserted
-	ph.prev = resize(ph.prev, n)
 	ph.pivRow = ph.pivRow[:0]
 	ph.pivCol = ph.pivCol[:0]
 	ph.uCols = ph.uCols[:0]
@@ -100,21 +102,24 @@ func (ph *phase1) run(rs *rowSet) {
 		ph.vdeg[r] = d
 		maxDeg = max(maxDeg, d)
 	}
-	ph.head = filled(ph.head, int(maxDeg)+1, -1)
-	// Insert in reverse so that each bucket lists rows in increasing order.
+	ph.bucket = resize(ph.bucket, int(maxDeg)+1)
+	for d := range ph.bucket {
+		ph.bucket[d] = ph.bucket[d][:0]
+	}
+	// Push in reverse so that each bucket lists rows in increasing order.
 	for r := n - 1; r >= 0; r-- {
 		if ph.vdeg[r] > 0 {
-			ph.insert(int32(r))
+			ph.push(int32(r))
 		}
 	}
 	ph.minR = 1
 
 	remaining := W
 	for remaining > 0 {
-		for ph.minR < len(ph.head) && ph.head[ph.minR] < 0 {
+		for ph.minR < len(ph.bucket) && ph.top(ph.minR) < 0 {
 			ph.minR++
 		}
-		if ph.minR >= len(ph.head) {
+		if ph.minR >= len(ph.bucket) {
 			// No unchosen row has an entry in V. The remaining V columns
 			// can only be resolved by HDPC rows in phase 2 (or not at all).
 			for c := range W {
@@ -129,7 +134,7 @@ func (ph *phase1) run(rs *rowSet) {
 		var row int32
 		switch r := ph.minR; {
 		case r == 1:
-			row = ph.head[1]
+			row = ph.top(1)
 		case r == 2:
 			row = ph.componentRow()
 		default:
@@ -152,8 +157,7 @@ func (ph *phase1) run(rs *rowSet) {
 			}
 		}
 
-		ph.remove(row)
-		ph.chosen[row] = true
+		ph.chosen[row] = true // its bucket entry is now stale
 		piv := vcols[best]
 		ph.colState[piv] = colPivot
 		ph.colPiv[piv] = int32(len(ph.pivRow))
@@ -187,48 +191,55 @@ func (ph *phase1) leaveV(c uint16) {
 		if ph.chosen[r] {
 			continue
 		}
-		ph.remove(r)
 		ph.vdeg[r]--
-		if ph.vdeg[r] > 0 {
-			ph.insert(r)
-			if int(ph.vdeg[r]) < ph.minR {
-				ph.minR = int(ph.vdeg[r])
+		if d := ph.vdeg[r]; d > 0 {
+			ph.push(r) // the entry in bucket d+1 is now stale
+			if int(d) < ph.minR {
+				ph.minR = int(d)
 			}
 		}
 	}
 }
 
-func (ph *phase1) insert(r int32) {
+func (ph *phase1) push(r int32) {
 	d := ph.vdeg[r]
 	if d == 2 {
 		ph.newTwos++
 	}
-	h := ph.head[d]
-	ph.next[r] = h
-	ph.prev[r] = -1
-	if h >= 0 {
-		ph.prev[h] = r
-	}
-	ph.head[d] = r
+	ph.bucket[d] = append(ph.bucket[d], r)
 }
 
-func (ph *phase1) remove(r int32) {
-	if ph.prev[r] >= 0 {
-		ph.next[ph.prev[r]] = ph.next[r]
-	} else {
-		ph.head[ph.vdeg[r]] = ph.next[r]
-	}
-	if ph.next[r] >= 0 {
-		ph.prev[ph.next[r]] = ph.prev[r]
-	}
+// valid reports whether a bucket-d entry for row r is current.
+func (ph *phase1) valid(r int32, d int) bool {
+	return !ph.chosen[r] && int(ph.vdeg[r]) == d
 }
 
-// minDegreeRow returns a row with r nonzeros in V of minimum original degree.
+// top returns the most recent valid row of bucket d, dropping stale entries
+// above it, or -1 if there is none.
+func (ph *phase1) top(d int) int32 {
+	b := ph.bucket[d]
+	for len(b) > 0 {
+		if r := b[len(b)-1]; ph.valid(r, d) {
+			ph.bucket[d] = b
+			return r
+		}
+		b = b[:len(b)-1]
+	}
+	ph.bucket[d] = b
+	return -1
+}
+
+// minDegreeRow returns a row with r nonzeros in V of minimum original degree
+// (the most recent such row on ties).
 func (ph *phase1) minDegreeRow(r int) int32 {
-	best := ph.head[r]
-	bestDeg := ph.rs.start[best+1] - ph.rs.start[best]
-	for x := ph.next[best]; x >= 0; x = ph.next[x] {
-		if d := ph.rs.start[x+1] - ph.rs.start[x]; d < bestDeg {
+	best, bestDeg := int32(-1), int32(0)
+	b := ph.bucket[r]
+	for i := len(b) - 1; i >= 0; i-- {
+		x := b[i]
+		if !ph.valid(x, r) {
+			continue
+		}
+		if d := ph.rs.start[x+1] - ph.rs.start[x]; best < 0 || d < bestDeg {
 			best, bestDeg = x, d
 		}
 	}
@@ -285,7 +296,12 @@ func (ph *phase1) buildComponents() {
 		ph.ufGen = 1
 	}
 	ph.pairs = ph.pairs[:0]
-	for r := ph.head[2]; r >= 0; r = ph.next[r] {
+	b := ph.bucket[2]
+	for i := len(b) - 1; i >= 0; i-- {
+		r := b[i]
+		if !ph.valid(r, 2) {
+			continue
+		}
 		var ends [2]int32
 		k := 0
 		for _, c := range ph.rs.row(int(r)) {

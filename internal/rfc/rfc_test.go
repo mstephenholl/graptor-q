@@ -1,7 +1,9 @@
 package rfc
 
 import (
+	"math/rand/v2"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/mholland/graptorq/internal/rfc/rfctext"
@@ -100,6 +102,81 @@ func TestTupleKnownAnswer(t *testing.T) {
 	} {
 		if got := p.Tuple(c.x); got != c.want {
 			t.Errorf("Tuple[10, %d] = %v, want %v", c.x, got, c.want)
+		}
+	}
+}
+
+// The optimized Tuple and column walk must equal the literal pseudo-code of
+// Sections 5.3.5.3 and 5.3.5.4 for every K' and many ISIs, including the
+// fastmod reductions at the extremes of the 32-bit range.
+func TestTupleMatchesRFCFormula(t *testing.T) {
+	rng := rand.New(rand.NewPCG(81, 82))
+	for i := range All() {
+		p := &All()[i]
+		for n := range 300 {
+			x := rng.Uint32()
+			switch n {
+			case 0:
+				x = 0
+			case 1:
+				x = 1<<32 - 1
+			}
+			a := uint32(53591 + p.J*997)
+			if a%2 == 0 {
+				a++
+			}
+			y := uint32(10267*(p.J+1)) + x*a
+			d := p.Deg(Rand(y, 0, 1<<20))
+			want := Tuple{D: d, A: 1 + Rand(y, 1, uint32(p.W-1)), B: Rand(y, 2, uint32(p.W)), D1: 2}
+			if d < 4 {
+				want.D1 = 2 + Rand(x, 3, 2)
+			}
+			want.A1 = 1 + Rand(x, 4, uint32(p.P1-1))
+			want.B1 = Rand(x, 5, uint32(p.P1))
+			if got := p.Tuple(x); got != want {
+				t.Fatalf("K'=%d X=%d: Tuple = %v, want %v", p.KPrime, x, got, want)
+			}
+			// Literal Enc walk.
+			var cols []uint16
+			b := want.B
+			cols = append(cols, uint16(b))
+			for j := uint32(1); j <= want.D-1; j++ {
+				b = (b + want.A) % uint32(p.W)
+				cols = append(cols, uint16(b))
+			}
+			b1 := want.B1
+			for b1 >= uint32(p.P) {
+				b1 = (b1 + want.A1) % uint32(p.P1)
+			}
+			cols = append(cols, uint16(uint32(p.W)+b1))
+			for j := uint32(1); j <= want.D1-1; j++ {
+				b1 = (b1 + want.A1) % uint32(p.P1)
+				for b1 >= uint32(p.P) {
+					b1 = (b1 + want.A1) % uint32(p.P1)
+				}
+				cols = append(cols, uint16(uint32(p.W)+b1))
+			}
+			if got := p.AppendTupleCols(nil, want); !slices.Equal(got, cols) {
+				t.Fatalf("K'=%d X=%d: columns %v, want %v", p.KPrime, x, got, cols)
+			}
+		}
+	}
+}
+
+func TestModulus(t *testing.T) {
+	rng := rand.New(rand.NewPCG(83, 84))
+	for _, d := range []uint32{1, 2, 3, 7, 16, 1<<20 - 1, 56951, 1<<31 + 11, 1<<32 - 1} {
+		m := newModulus(d)
+		for range 10000 {
+			x := rng.Uint32()
+			if got := m.mod(x); got != x%d {
+				t.Fatalf("%d mod %d = %d, want %d", x, d, got, x%d)
+			}
+		}
+		for _, x := range []uint32{0, 1, d - 1, d, 1<<32 - 1} {
+			if got := m.mod(x); got != x%d {
+				t.Fatalf("%d mod %d = %d, want %d", x, d, got, x%d)
+			}
 		}
 	}
 }

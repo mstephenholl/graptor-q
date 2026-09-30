@@ -3,3 +3,11 @@
 package gf256
 
 func archTiers() []*kernels { return nil }
+
+func xorN(dst []byte, srcs [][]byte, acc bool) { xorNGeneric(dst, srcs, acc) }
+
+func hdpcStep(z, y, h1, h2 []byte) { hdpcStepGeneric(z, y, h1, h2) }
+
+func xorGather(dst, first, base []byte, stride int, idx []uint16, acc bool) {
+	xorGatherGeneric(dst, first, base, stride, idx, acc)
+}

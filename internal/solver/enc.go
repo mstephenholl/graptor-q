@@ -10,10 +10,11 @@ import (
 // in work. cols is scratch space and is returned for reuse.
 func EncodeSymbol(p *rfc.Params, work []byte, T int, isi uint32, dst []byte, cols []uint16) []uint16 {
 	cols = p.AppendEncCols(cols[:0], isi)
-	dst = dst[:T]
-	copy(dst, work[int(cols[0])*T:int(cols[0]+1)*T])
-	for _, c := range cols[1:] {
-		gf256.AddSlice(dst, work[int(c)*T:int(c+1)*T])
+	var buf [48][]byte // at most d + d1 = 30 + 3 operands
+	srcs := buf[:0]
+	for _, c := range cols {
+		srcs = append(srcs, work[int(c)*T:int(c+1)*T])
 	}
+	gf256.SetXor(dst[:T], srcs) // one pass over the operands
 	return cols
 }

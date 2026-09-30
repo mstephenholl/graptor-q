@@ -319,15 +319,15 @@ func TestLowLossPathEquivalence(t *testing.T) {
 			}
 		}
 		want := solver.Solvable(p, isis)
-		out := make([]byte, K*T)
-		if got := dec.decodeLowLoss(out); got != want {
+		if got := dec.decodeLowLoss(); got != want {
 			t.Fatalf("trial %d K=%d m=%d: low-loss path %v, full system solvable %v", trial, K, m, got, want)
 		}
 		if !want {
 			singular++
 			continue
 		}
-		if !bytes.Equal(out, data) {
+		dec.decoded = true
+		if out, _ := dec.AppendSource(nil); !bytes.Equal(out, data) {
 			t.Fatalf("trial %d K=%d m=%d: wrong data from the low-loss path", trial, K, m)
 		}
 	}

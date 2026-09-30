@@ -1,6 +1,7 @@
 package solver
 
 import (
+	"math/bits"
 	"slices"
 	"sync"
 
@@ -16,6 +17,7 @@ const (
 	opMulAdd                 // dst ^= c * slot[src]
 	opScale                  // dst = c * dst
 	opScaleAdd               // dst = c*dst ^ slot[src]
+	opHDPC                   // the right-hand sides of the HDPC rows (see execHDPC)
 )
 
 type instr struct {
@@ -29,6 +31,8 @@ type instr struct {
 // Plan is a straight-line program that computes the L intermediate symbols
 // from the right-hand sides of the constraint rows. It works on a slot array
 // of Slots symbols; after execution slot c holds intermediate symbol C[c].
+// Slots L, L+1 and L+2 are scratch: the HDPC recurrence value, a zero
+// symbol and a sink for contributions to unused HDPC rows.
 //
 // A Plan is independent of the symbol size and immutable once built, so it
 // may be executed concurrently and cached.
@@ -40,6 +44,15 @@ type Plan struct {
 	instrs []instr
 	args   []uint16
 	n4     int // index of the first instruction of the final forward substitution (N4)
+	// A pruned plan shares instrs with the plan it was pruned from and runs
+	// instrs[:n4] followed by tail instead of instrs[n4:].
+	tail    []instr
+	hasTail bool
+
+	// For opHDPC: the slot of each used HDPC row (-1 if unused) and the set
+	// of pivot columns among the first K'+S columns.
+	hslot [16]int32
+	hpiv  []uint64
 }
 
 // NewPlan builds the plan for the constraint matrix made of the S LDPC rows,
@@ -86,7 +99,15 @@ func Solvable(p *rfc.Params, isis []uint32) bool {
 }
 
 // Size returns the approximate memory footprint of the plan in bytes.
-func (pl *Plan) Size() int { return len(pl.instrs)*16 + len(pl.args)*2 + 64 }
+func (pl *Plan) Size() int { return (len(pl.instrs)+len(pl.tail))*16 + len(pl.args)*2 + 64 }
+
+// program returns the instructions to run: head, then tail.
+func (pl *Plan) program() (head, tail []instr) {
+	if pl.hasTail {
+		return pl.instrs[:pl.n4], pl.tail
+	}
+	return pl.instrs, nil
+}
 
 // emitFrom emits an instruction whose arguments were appended to pl.args
 // from index a0 on.
@@ -108,9 +129,10 @@ func (pl *Plan) assemble(ph *phase1, p2 *phase2, inputs int) {
 	z := L // scratch slot for the HDPC recurrence
 	n := p.KPrime + p.S
 	*pl = Plan{
-		Params: p, Slots: L + 1, Inputs: inputs,
-		instrs: slices.Grow(pl.instrs[:0], 2*len(ph.pivRow)+len(p2.cand)+p.H+3*n+len(p2.ops)),
-		args:   slices.Grow(pl.args[:0], 2*len(rs.cols)+2*n+len(p2.ops)),
+		Params: p, Slots: L + 3, Inputs: inputs,
+		instrs: slices.Grow(pl.instrs[:0], 2*len(ph.pivRow)+len(p2.cand)+len(p2.ops)+1),
+		args:   slices.Grow(pl.args[:0], 2*len(rs.cols)+len(p2.args)),
+		hpiv:   pl.hpiv,
 	}
 
 	// slot of phase-2 row: the U column whose value it holds at the end.
@@ -141,56 +163,35 @@ func (pl *Plan) assemble(ph *phase1, p2 *phase2, inputs int) {
 		pl.emitFrom(opSet, slot(int32(b)), rs.input(int(r)), a0)
 	}
 
-	// N2: right-hand sides of the used HDPC rows, G_HDPC * y.
-	H := p.H
-	var hslot [16]int // H <= 16 for every row of Table 2
+	// N2: right-hand sides of the used HDPC rows, G_HDPC * y, as a single
+	// instruction running the GAMMA recurrence (see execHDPC).
 	anyLive := false
-	for h := range H {
-		hslot[h] = -1
-		if p2.rowCol[p2.nb+h] >= 0 {
-			hslot[h] = slot(int32(p2.nb + h))
-			pl.emit(opSet, 0, hslot[h], -1)
+	for h := range pl.hslot {
+		pl.hslot[h] = -1
+		if h < p.H && p2.rowCol[p2.nb+h] >= 0 {
+			pl.hslot[h] = int32(slot(int32(p2.nb + h)))
 			anyLive = true
 		}
 	}
 	if anyLive {
-		pairs := hdpcPairs(p)
-		started := false
+		pl.hpiv = zeroed(pl.hpiv, (n+63)/64)
 		for j := range n {
-			piv := ph.colPiv[j] >= 0
-			switch {
-			case piv && !started:
-				pl.emit(opSet, 0, z, -1, uint16(j))
-				started = true
-			case piv:
-				pl.emit(opScaleAdd, 2, z, int32(j))
-			case started:
-				pl.emit(opScale, 2, z, 0)
-			}
-			if !started {
-				continue
-			}
-			if j < n-1 {
-				for _, h := range [2]uint8{pairs.r1[j], pairs.r2[j]} {
-					if hslot[h] >= 0 {
-						pl.emit(opXor, 0, hslot[h], 0, uint16(z))
-					}
-				}
-			} else {
-				for h := range H {
-					if hslot[h] >= 0 {
-						pl.emit(opMulAdd, gf256.Exp(h), hslot[h], int32(z))
-					}
-				}
+			if ph.colPiv[j] >= 0 {
+				pl.hpiv[j>>6] |= 1 << (j & 63)
 			}
 		}
+		pl.emit(opHDPC, 0, z, 0)
 	}
 
 	// N3: phase-2 elimination, leaving C[c] in slot c for every c in U.
 	for _, op := range p2.ops {
 		switch op.kind {
-		case p2Xor:
-			pl.emit(opXor, 0, slot(op.dst), 0, uint16(slot(op.src)))
+		case p2XorN:
+			a0 := len(pl.args)
+			for _, r := range p2.args[op.a0:op.a1] {
+				pl.args = append(pl.args, uint16(slot(r)))
+			}
+			pl.emitFrom(opXor, slot(op.dst), 0, a0)
 		case p2MulAdd:
 			pl.emit(opMulAdd, op.c, slot(op.dst), int32(slot(op.src)))
 		case p2Scale:
@@ -242,8 +243,14 @@ func (pl *Plan) ExecuteParallel(work []byte, T int, in [][]byte, n int) {
 }
 
 // ExecuteRange runs the plan on bytes [lo, hi) of every symbol only. Since
-// all operations are bytewise, disjoint ranges can be executed independently
-// (for cache blocking or in parallel).
+// all operations are bytewise, disjoint ranges can be executed independently,
+// in parallel.
+//
+// Running ranges one after another for cache blocking does not pay off: it
+// was measured (K' from 1000 to 50000, T up to 4096, working sets from 1 MB
+// to 64 MB) to be slower for every stripe width, since each stripe replays
+// every instruction (16-33 ns each) while execution is bandwidth-bound
+// rather than dominated by cache misses on reuse.
 func (pl *Plan) ExecuteRange(work []byte, T int, in [][]byte, lo, hi int) {
 	if len(in) != pl.Inputs {
 		panic("solver: wrong number of input symbols")
@@ -255,39 +262,84 @@ func (pl *Plan) ExecuteRange(work []byte, T int, in [][]byte, lo, hi int) {
 		o := s * T
 		return work[o+lo : o+hi : o+hi]
 	}
-	sp := srcsPool.Get().(*[][]byte)
-	srcs := (*sp)[:0] // operands of the fused XORs
-	for i := range pl.instrs {
-		ins := &pl.instrs[i]
-		dst := sym(int(ins.dst))
+	head, tail := pl.program()
+	pl.run(head, work, T, in, lo, hi, sym)
+	pl.run(tail, work, T, in, lo, hi, sym)
+}
+
+// run executes instrs over bytes [lo, hi) of every symbol.
+func (pl *Plan) run(instrs []instr, work []byte, T int, in [][]byte, lo, hi int, sym func(int) []byte) {
+	base := work[lo:] // slot s starts at base[s*T]
+	for i := range instrs {
+		ins := &instrs[i]
+		o := int(ins.dst) * T
+		dst := base[o : o+hi-lo : o+hi-lo]
 		args := pl.args[ins.a0:ins.a1]
 		switch ins.kind {
 		case opSet:
-			srcs = srcs[:0]
+			var first []byte
 			if ins.src >= 0 && in[ins.src] != nil {
-				srcs = append(srcs, in[ins.src][lo:hi])
+				first = in[ins.src][lo:hi]
 			}
-			for _, a := range args {
-				srcs = append(srcs, sym(int(a)))
-			}
-			gf256.SetXor(dst, srcs)
+			gf256.XorGather(dst, first, base, T, args, false)
 		case opXor:
-			srcs = srcs[:0]
-			for _, a := range args {
-				srcs = append(srcs, sym(int(a)))
-			}
-			gf256.XorN(dst, srcs)
+			gf256.XorGather(dst, nil, base, T, args, true)
 		case opMulAdd:
 			gf256.MulAddSlice(dst, sym(int(ins.src)), ins.c)
 		case opScale:
 			gf256.MulSlice(dst, dst, ins.c)
 		case opScaleAdd:
 			gf256.ScaleAdd(dst, sym(int(ins.src)), ins.c)
+		case opHDPC:
+			pl.execHDPC(sym)
 		}
 	}
-	clear(srcs[:cap(srcs)]) // do not keep symbol memory alive from the pool
-	*sp = srcs[:0]
-	srcsPool.Put(sp)
 }
 
-var srcsPool = sync.Pool{New: func() any { return new([][]byte) }}
+// execHDPC computes the right-hand sides of the used HDPC rows,
+// G_HDPC * y with G_HDPC = MT * GAMMA, where y_j is the reduced right-hand
+// side of pivot column j (already in slot j) and 0 for the other columns. It
+// runs the recurrence z_j = alpha*z_{j-1} + y_j (GAMMA) and adds z_j to the
+// two rows of MT with a one in column j, one fused kernel call per column.
+// The last column of MT holds alpha^h in row h.
+func (pl *Plan) execHDPC(sym func(int) []byte) {
+	p := pl.Params
+	H, n, L := p.H, p.KPrime+p.S, p.L
+	z, zero, sink := sym(L), sym(L+1), sym(L+2)
+	clear(z)
+	clear(zero)
+	var hs [16][]byte
+	for h := range H {
+		if s := pl.hslot[h]; s >= 0 {
+			hs[h] = sym(int(s))
+			clear(hs[h])
+		} else {
+			hs[h] = sink
+		}
+	}
+	// z stays zero until the first pivot column.
+	first := n
+	for i, w := range pl.hpiv {
+		if w != 0 {
+			first = i<<6 + bits.TrailingZeros64(w)
+			break
+		}
+	}
+	pairs := hdpcPairs(p)
+	for j := first; j < n; j++ {
+		y := zero
+		if pl.hpiv[j>>6]>>(j&63)&1 != 0 {
+			y = sym(j)
+		}
+		if j < n-1 {
+			gf256.HDPCStep(z, y, hs[pairs.r1[j]], hs[pairs.r2[j]])
+		} else {
+			gf256.HDPCStep(z, y, sink, sink)
+			for h := range H {
+				if pl.hslot[h] >= 0 {
+					gf256.MulAddSlice(hs[h], z, gf256.Exp(h))
+				}
+			}
+		}
+	}
+}

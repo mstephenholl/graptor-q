@@ -135,7 +135,7 @@ func TestGatherScatter(t *testing.T) {
 		t.Fatalf("gather = %v, want %v", sym, want)
 	}
 	back := make([]byte, 16)
-	l.scatter(back, sym, 2)
+	l.scatter(back, func(m int) []byte { return sym[m*8 : (m+1)*8] }, 2)
 	if !bytes.Equal(back, block) {
 		t.Fatalf("scatter = %v", back)
 	}

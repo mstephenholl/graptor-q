@@ -158,12 +158,12 @@ func (d *Decoder) AppendObject(dst []byte) ([]byte, error) {
 		info := d.layout.Block(uint8(sbn))
 		b := d.blocks[sbn]
 		if !d.layout.interleaved() {
-			dst = append(dst, b.out[:info.Length]...)
+			dst, _ = b.AppendSource(dst)
 			continue
 		}
 		n := len(dst)
 		dst = grow(dst, int(info.Length))
-		d.layout.scatter(dst[n:], b.out, info.K)
+		d.layout.scatter(dst[n:], b.source, info.K)
 	}
 	return dst, nil
 }
@@ -178,13 +178,13 @@ func (d *Decoder) WriteTo(w io.Writer) (int64, error) {
 	for sbn := range d.blocks {
 		info := d.layout.Block(uint8(sbn))
 		b := d.blocks[sbn]
-		out := b.out[:info.Length]
 		if d.layout.interleaved() {
 			buf = grow(buf[:0], int(info.Length))
-			d.layout.scatter(buf, b.out, info.K)
-			out = buf
+			d.layout.scatter(buf, b.source, info.K)
+		} else {
+			buf, _ = b.AppendSource(buf[:0])
 		}
-		n, err := w.Write(out)
+		n, err := w.Write(buf)
 		total += int64(n)
 		if err != nil {
 			return total, err

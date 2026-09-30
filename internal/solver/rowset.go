@@ -48,9 +48,14 @@ func (rs *rowSet) build(p *rfc.Params, isis []uint32) {
 	ldpc := ldpcRows(p)
 	rs.start = append(rs.start[:0], ldpc.start...)
 	rs.cols = append(rs.cols[:0], ldpc.cols...)
+	base := baseRows(p)
 	for _, x := range isis {
 		// LT row columns are always distinct, so no cancellation is needed.
-		rs.cols = p.AppendEncCols(rs.cols, x)
+		if int(x) < p.KPrime {
+			rs.cols = append(rs.cols, base.cols[base.start[x]:base.start[x+1]]...)
+		} else {
+			rs.cols = p.AppendEncCols(rs.cols, x)
+		}
 		rs.start = append(rs.start, int32(len(rs.cols)))
 	}
 
@@ -97,6 +102,45 @@ func ldpcRows(p *rfc.Params) *csr {
 	}
 	v, _ := ldpcCache.LoadOrStore(p.KPrime, c)
 	return v.(*csr)
+}
+
+// baseCache keeps the LT rows of ISIs 0..K'-1 for a few recent K': a
+// decoder's source and padding symbols are all among them, so their rows
+// are copied instead of recomputed. An entry takes about 18 bytes per
+// symbol (1 MB for K' = 56403).
+var baseCache struct {
+	mu      sync.Mutex
+	entries [4]*baseEntry
+	next    int
+}
+
+type baseEntry struct {
+	kPrime int
+	rows   *csr
+}
+
+// baseRows returns the LT rows of ISIs 0..K'-1 of p.
+func baseRows(p *rfc.Params) *csr {
+	baseCache.mu.Lock()
+	for _, e := range baseCache.entries {
+		if e != nil && e.kPrime == p.KPrime {
+			baseCache.mu.Unlock()
+			return e.rows
+		}
+	}
+	baseCache.mu.Unlock()
+
+	c := &csr{start: make([]int32, 1, p.KPrime+1)}
+	c.cols = make([]uint16, 0, p.KPrime*8)
+	for x := range uint32(p.KPrime) {
+		c.cols = p.AppendEncCols(c.cols, x)
+		c.start = append(c.start, int32(len(c.cols)))
+	}
+	baseCache.mu.Lock()
+	baseCache.entries[baseCache.next] = &baseEntry{p.KPrime, c}
+	baseCache.next = (baseCache.next + 1) % len(baseCache.entries)
+	baseCache.mu.Unlock()
+	return c
 }
 
 func (rs *rowSet) nrows() int            { return len(rs.start) - 1 }

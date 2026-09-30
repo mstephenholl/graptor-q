@@ -271,6 +271,91 @@ func TestFusedXorNoAlloc(t *testing.T) {
 	})
 }
 
+func TestHDPCStep(t *testing.T) {
+	forEachTier(t, func(t *testing.T) {
+		rng := rand.New(rand.NewPCG(17, 18))
+		random := func(n int) []byte {
+			b := make([]byte, n)
+			for i := range b {
+				b[i] = byte(rng.Uint32())
+			}
+			return b
+		}
+		for _, n := range testLengths {
+			for _, alias := range []bool{false, true} {
+				z, y, h1, h2 := random(n), random(n), random(n), random(n)
+				if alias {
+					h2 = h1
+				}
+				wz, wh1, wh2 := make([]byte, n), bytes.Clone(h1), bytes.Clone(h2)
+				for i := range n {
+					wz[i] = Mul(2, z[i]) ^ y[i]
+				}
+				refMulAdd(wh1, wz, 1)
+				if alias {
+					wh2 = wh1
+					refMulAdd(wh2, wz, 1)
+				} else {
+					refMulAdd(wh2, wz, 1)
+				}
+				HDPCStep(z, y, h1, h2)
+				if !bytes.Equal(z, wz) || !bytes.Equal(h1, wh1) || !bytes.Equal(h2, wh2) {
+					t.Fatalf("n=%d alias=%v: mismatch", n, alias)
+				}
+			}
+		}
+	})
+}
+
+func TestXorGather(t *testing.T) {
+	forEachTier(t, func(t *testing.T) {
+		rng := rand.New(rand.NewPCG(19, 20))
+		for _, n := range []int{1, 7, 31, 32, 33, 64, 95, 96, 100, 1280, 1283} {
+			stride := n + rng.IntN(64)
+			base := make([]byte, 40*stride)
+			for i := range base {
+				base[i] = byte(rng.Uint32())
+			}
+			for _, k := range []int{0, 1, 2, 7, 8, 9, 16, 17} {
+				for _, withFirst := range []bool{false, true} {
+					for _, acc := range []bool{false, true} {
+						idx := make([]uint16, k)
+						for i := range idx {
+							idx[i] = uint16(rng.IntN(40))
+						}
+						var first []byte
+						if withFirst {
+							first = make([]byte, n)
+							for i := range first {
+								first[i] = byte(rng.Uint32())
+							}
+						}
+						orig := make([]byte, n)
+						for i := range orig {
+							orig[i] = byte(rng.Uint32())
+						}
+						want := make([]byte, n)
+						if acc {
+							copy(want, orig)
+						}
+						if first != nil {
+							refMulAdd(want, first, 1)
+						}
+						for _, i := range idx {
+							refMulAdd(want, base[int(i)*stride:int(i)*stride+n], 1)
+						}
+						dst := bytes.Clone(orig)
+						XorGather(dst, first, base, stride, idx, acc)
+						if !bytes.Equal(dst, want) {
+							t.Fatalf("n=%d k=%d first=%v acc=%v: mismatch", n, k, withFirst, acc)
+						}
+					}
+				}
+			}
+		}
+	})
+}
+
 func TestLengthMismatchPanics(t *testing.T) {
 	defer func() {
 		if recover() == nil {

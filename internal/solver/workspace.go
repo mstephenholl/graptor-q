@@ -62,7 +62,10 @@ func (w *Workspace) Prune(pl *Plan, want []uint32) *Plan {
 			need[c] = true
 		}
 	}
-	tail := pl.instrs[pl.n4:]
+	_, tail := pl.program()
+	if !pl.hasTail {
+		tail = pl.instrs[pl.n4:]
+	}
 	keep := zeroed(w.keep, len(tail))
 	w.keep = keep
 	kept := 0
@@ -75,15 +78,16 @@ func (w *Workspace) Prune(pl *Plan, want []uint32) *Plan {
 			}
 		}
 	}
-	instrs := resize(w.pruned.instrs, pl.n4+kept)[:pl.n4]
-	copy(instrs, pl.instrs[:pl.n4])
+	// The pruned plan shares the instructions before N4 and keeps its own
+	// tail, so pruning does not copy the whole plan.
+	kt := resize(w.pruned.tail, kept)[:0]
 	for i, k := range keep {
 		if k {
-			instrs = append(instrs, tail[i])
+			kt = append(kt, tail[i])
 		}
 	}
 	w.pruned = *pl
-	w.pruned.instrs = instrs
+	w.pruned.tail, w.pruned.hasTail = kt, true
 	return &w.pruned
 }
 

@@ -187,7 +187,8 @@ func BenchmarkCmp(b *testing.B) {
 		})
 
 		// Decode with 10% of the source symbols lost and replaced by repair
-		// symbols, plus two extra.
+		// symbols, plus two extra. Both libraries deliver the decoded block
+		// into a reused buffer (AppendSource, DecodeInto).
 		ge, _ := graptorq.NewBlockEncoder(data, c.T)
 		type sym struct {
 			esi  uint32
@@ -215,6 +216,7 @@ func BenchmarkCmp(b *testing.B) {
 			b.Run("lib="+v.lib+"/op=decode/"+name, func(b *testing.B) {
 				b.SetBytes(int64(len(data)))
 				d, _ := graptorq.NewBlockDecoder(len(data), c.T, graptorq.WithConcurrency(v.n))
+				out := make([]byte, 0, len(data))
 				for b.Loop() {
 					d.Reset()
 					for _, s := range syms {
@@ -223,18 +225,20 @@ func BenchmarkCmp(b *testing.B) {
 					if err := d.Decode(); err != nil {
 						b.Fatal(err)
 					}
+					out, _ = d.AppendSource(out[:0])
 				}
 			})
 		}
 		b.Run("lib=xssnick/op=decode/"+name, func(b *testing.B) {
 			b.SetBytes(int64(len(data)))
 			d, _ := xraptorq.NewRaptorQ(uint32(c.T)).CreateDecoder(uint32(len(data)))
+			out := make([]byte, len(data))
 			for b.Loop() {
 				d.Reset()
 				for _, s := range syms {
 					d.AddSymbol(s.esi, s.data)
 				}
-				if ok, _, err := d.Decode(); !ok || err != nil {
+				if ok, err := d.DecodeInto(out); !ok || err != nil {
 					b.Fatal("xssnick decode failed", err)
 				}
 			}

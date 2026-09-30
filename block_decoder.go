@@ -19,14 +19,14 @@ type BlockDecoder struct {
 	sbn    uint8 // reported in DecodeError
 
 	arena   []byte  // received symbol data
-	srcOff  []int32 // per source ESI: offset in arena, or -1
-	nsrc    int
+	srcOff  []int32 // per source ESI: offset in arena, -1 if missing, -2-k if recovered as rec symbol k
+	nsrc    int     // received source symbols
 	repESI  []uint32
 	repOff  []int32
 	seenRep map[uint32]struct{}
 
 	decoded bool
-	out     []byte // K*T bytes of decoded source symbols
+	rec     []byte // source symbols recovered by Decode (the output is gathered from arena and rec)
 
 	// Memory reused by every decode, so that decoding after Reset does not
 	// allocate.
@@ -100,7 +100,7 @@ func (d *BlockDecoder) Reset() {
 	d.repOff = d.repOff[:0]
 	clear(d.seenRep)
 	d.decoded = false
-	d.out = d.out[:0]
+	d.rec = d.rec[:0]
 }
 
 // AddSymbol adds the encoding symbol with the given ESI, which must be
@@ -146,6 +146,16 @@ func (d *BlockDecoder) sym(off int32) []byte {
 	return d.arena[off : int(off)+d.t : int(off)+d.t]
 }
 
+// source returns source symbol i of a decoded block.
+func (d *BlockDecoder) source(i int) []byte {
+	if off := d.srcOff[i]; off >= 0 {
+		return d.sym(off)
+	} else {
+		k := int(-2 - off)
+		return d.rec[k*d.t : (k+1)*d.t : (k+1)*d.t]
+	}
+}
+
 // Decode recovers the source block. It returns an error wrapping
 // ErrInsufficientSymbols if more symbols are needed.
 func (d *BlockDecoder) Decode() error {
@@ -155,17 +165,13 @@ func (d *BlockDecoder) Decode() error {
 	if d.Received() < d.k {
 		return &DecodeError{SBN: d.sbn, Received: d.Received(), Needed: d.k}
 	}
-	out := grow(d.out[:0], d.k*d.t)
 	if d.nsrc == d.k {
-		for i, off := range d.srcOff {
-			copy(out[i*d.t:], d.sym(off))
-		}
-		d.out, d.decoded = out, true
+		d.decoded = true
 		return nil
 	}
 
-	if d.useLowLoss() && d.decodeLowLoss(out) {
-		d.out, d.decoded = out, true
+	if d.useLowLoss() && d.decodeLowLoss() {
+		d.decoded = true
 		return nil
 	}
 
@@ -206,16 +212,13 @@ func (d *BlockDecoder) Decode() error {
 	}
 	work := d.work[:plan.Slots*d.t]
 	plan.ExecuteParallel(work, d.t, in, d.o.concurrency)
+	d.rec = resize(d.rec, len(missing)*d.t)
 	var cols [48]uint16
-	for i, off := range d.srcOff {
-		dst := out[i*d.t : (i+1)*d.t]
-		if off >= 0 {
-			copy(dst, d.sym(off))
-		} else {
-			solver.EncodeSymbol(p, work, d.t, uint32(i), dst, cols[:0])
-		}
+	for k, i := range missing {
+		solver.EncodeSymbol(p, work, d.t, i, d.rec[k*d.t:(k+1)*d.t], cols[:0])
+		d.srcOff[i] = int32(-2 - k)
 	}
-	d.out, d.decoded = out, true
+	d.decoded = true
 	return nil
 }
 
@@ -259,7 +262,7 @@ func lowLossWorthIt(kPrime, t, m int) bool {
 // system is solvable exactly when the full decoding system is. It returns
 // false if the equations are singular (the caller then uses the full solver,
 // which also uses every received symbol).
-func (d *BlockDecoder) decodeLowLoss(out []byte) bool {
+func (d *BlockDecoder) decodeLowLoss() bool {
 	p, T := d.p, d.t
 	full, err := d.o.planCache.plan(p)
 	if err != nil {
@@ -324,13 +327,10 @@ func (d *BlockDecoder) decodeLowLoss(out []byte) bool {
 	if err != nil {
 		return false
 	}
-	for i, off := range d.srcOff {
-		if off >= 0 {
-			copy(out[i*T:(i+1)*T], d.sym(off))
-		}
-	}
+	d.rec = resize(d.rec, m*T)
 	for k, i := range missing {
-		copy(out[int(i)*T:int(i+1)*T], rhs[pivots[k]])
+		copy(d.rec[k*T:(k+1)*T], rhs[pivots[k]])
+		d.srcOff[i] = int32(-2 - k)
 	}
 	return true
 }
@@ -340,5 +340,11 @@ func (d *BlockDecoder) AppendSource(dst []byte) ([]byte, error) {
 	if !d.decoded {
 		return dst, ErrNotDecoded
 	}
-	return append(dst, d.out[:d.length]...), nil
+	n := len(dst)
+	dst = grow(dst, d.length)
+	out := dst[n:]
+	for i := range d.k {
+		copy(out[i*d.t:], d.source(i)) // the last symbol may be truncated
+	}
+	return dst, nil
 }

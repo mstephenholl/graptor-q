@@ -2,12 +2,11 @@ package rfc
 
 // Rand is the pseudo-random number generator Rand[y, i, m] of Section 5.3.5.1.
 // It requires m > 0 and i < 256.
-func Rand(y, i, m uint32) uint32 {
-	x0 := (y + i) & 0xFF
-	x1 := (y>>8 + i) & 0xFF
-	x2 := (y>>16 + i) & 0xFF
-	x3 := (y>>24 + i) & 0xFF
-	return (v0[x0] ^ v1[x1] ^ v2[x2] ^ v3[x3]) % m
+func Rand(y, i, m uint32) uint32 { return rawRand(y, i) % m }
+
+// rawRand is Rand before the final reduction modulo m.
+func rawRand(y, i uint32) uint32 {
+	return v0[byte(y+i)] ^ v1[byte(y>>8+i)] ^ v2[byte(y>>16+i)] ^ v3[byte(y>>24+i)]
 }
 
 // Deg is the degree generator Deg[v] of Section 5.3.5.2 for v < 2^20: the
@@ -34,15 +33,15 @@ type Tuple struct {
 func (p *Params) Tuple(x uint32) Tuple {
 	y := p.tupleB + x*p.tupleA // mod 2^32
 	var t Tuple
-	t.D = p.Deg(Rand(y, 0, 1<<20))
-	t.A = 1 + Rand(y, 1, uint32(p.W-1))
-	t.B = Rand(y, 2, uint32(p.W))
+	t.D = p.Deg(rawRand(y, 0) & (1<<20 - 1)) // Rand[y, 0, 2^20]
+	t.A = 1 + p.modW1.mod(rawRand(y, 1))     // 1 + Rand[y, 1, W-1]
+	t.B = p.modW.mod(rawRand(y, 2))          // Rand[y, 2, W]
 	if t.D < 4 {
-		t.D1 = 2 + Rand(x, 3, 2)
+		t.D1 = 2 + rawRand(x, 3)&1 // 2 + Rand[X, 3, 2]
 	} else {
 		t.D1 = 2
 	}
-	t.A1 = 1 + Rand(x, 4, uint32(p.P1-1))
-	t.B1 = Rand(x, 5, uint32(p.P1))
+	t.A1 = 1 + p.modP11.mod(rawRand(x, 4)) // 1 + Rand[X, 4, P1-1]
+	t.B1 = p.modP1.mod(rawRand(x, 5))      // Rand[X, 5, P1]
 	return t
 }

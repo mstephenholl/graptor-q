@@ -142,3 +142,39 @@ xnstore:
 
 xndone:
 	RET
+
+// One step of the HDPC recurrence, 16 bytes at a time: z = alpha*z ^ y,
+// h1 ^= z, h2 ^= z. alpha*z doubles each byte (VADD) and XORs 0x1D into the
+// bytes whose high bit was set (VCMTST with 0x80 gives that mask). h1 and h2
+// may be the same buffer.
+
+// func hdpcStepNEON(z, y, h1, h2 *byte, n int)
+TEXT ·hdpcStepNEON(SB), NOSPLIT, $0-40
+	MOVD z+0(FP), R0
+	MOVD y+8(FP), R1
+	MOVD h1+16(FP), R2
+	MOVD h2+24(FP), R3
+	MOVD n+32(FP), R4
+	MOVD $0x1d, R5
+	VDUP R5, V7.B16
+	MOVD $0x80, R5
+	VDUP R5, V6.B16
+
+hdloop:
+	VLD1   (R0), [V0.B16]
+	VCMTST V6.B16, V0.B16, V2.B16
+	VADD   V0.B16, V0.B16, V0.B16
+	VAND   V7.B16, V2.B16, V2.B16
+	VEOR   V2.B16, V0.B16, V0.B16
+	VLD1.P 16(R1), [V3.B16]
+	VEOR   V3.B16, V0.B16, V0.B16
+	VST1.P [V0.B16], 16(R0)
+	VLD1   (R2), [V4.B16]
+	VEOR   V0.B16, V4.B16, V4.B16
+	VST1.P [V4.B16], 16(R2)
+	VLD1   (R3), [V5.B16]
+	VEOR   V0.B16, V5.B16, V5.B16
+	VST1.P [V5.B16], 16(R3)
+	SUBS   $16, R4, R4
+	BNE    hdloop
+	RET

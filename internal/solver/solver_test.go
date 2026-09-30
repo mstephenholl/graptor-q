@@ -379,8 +379,8 @@ func TestPartialAndParallelPlans(t *testing.T) {
 				t.Fatalf("trial %d K'=%d: ISI %d wrong from partial or parallel plan", trial, p.KPrime, x)
 			}
 		}
-		if len(part.instrs) > len(full.instrs)+len(isis) {
-			t.Errorf("trial %d: partial plan is not smaller (%d vs %d)", trial, len(part.instrs), len(full.instrs))
+		if h, tl := part.program(); len(h)+len(tl) > len(full.instrs)+len(isis) {
+			t.Errorf("trial %d: partial plan is not smaller (%d vs %d)", trial, len(h)+len(tl), len(full.instrs))
 		}
 	}
 }
@@ -413,11 +413,20 @@ func BenchmarkDecodePlan(b *testing.B) {
 
 // samePlan reports whether two plans are the same program.
 func samePlan(a, b *Plan) bool {
-	if a.Params != b.Params || a.Slots != b.Slots || a.Inputs != b.Inputs || a.n4 != b.n4 || len(a.instrs) != len(b.instrs) {
+	ah, at := a.program()
+	bh, bt := b.program()
+	ai, bi := append(slices.Clone(ah), at...), append(slices.Clone(bh), bt...)
+	if a.Params != b.Params || a.Slots != b.Slots || a.Inputs != b.Inputs || a.n4 != b.n4 || len(ai) != len(bi) ||
+		a.hslot != b.hslot {
 		return false
 	}
-	for i := range a.instrs {
-		x, y := a.instrs[i], b.instrs[i]
+	for _, ins := range ai {
+		if ins.kind == opHDPC && !slices.Equal(a.hpiv, b.hpiv) {
+			return false
+		}
+	}
+	for i := range ai {
+		x, y := ai[i], bi[i]
 		if x.kind != y.kind || x.c != y.c || x.dst != y.dst || x.src != y.src ||
 			!slices.Equal(a.args[x.a0:x.a1], b.args[y.a0:y.a1]) {
 			return false

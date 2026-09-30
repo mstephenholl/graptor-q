@@ -7,6 +7,7 @@ package rfc
 
 import (
 	"errors"
+	"math/bits"
 	"sort"
 )
 
@@ -34,6 +35,22 @@ type Params struct {
 	B      int // W - S
 
 	tupleA, tupleB uint32 // Tuple constants A and B (Section 5.3.5.4)
+	// Reciprocals for the moduli of Tuple, which vary with K'.
+	modW, modW1, modP1, modP11 modulus
+}
+
+// modulus computes x % d for 32-bit x without a division, by Lemire's
+// "fastmod": with M = floor((2^64-1)/d) + 1, x % d = ((M*x mod 2^64) * d) >> 64.
+type modulus struct {
+	d uint32
+	m uint64
+}
+
+func newModulus(d uint32) modulus { return modulus{d, ^uint64(0)/uint64(d) + 1} }
+
+func (m modulus) mod(x uint32) uint32 {
+	hi, _ := bits.Mul64(m.m*uint64(x), uint64(m.d))
+	return uint32(hi)
 }
 
 var params [len(systematic)]Params
@@ -57,6 +74,8 @@ func init() {
 		}
 		p.tupleA = a
 		p.tupleB = uint32(10267 * (p.J + 1))
+		p.modW, p.modW1 = newModulus(uint32(p.W)), newModulus(uint32(p.W-1))
+		p.modP1, p.modP11 = newModulus(uint32(p.P1)), newModulus(uint32(p.P1-1))
 		params[i] = p
 	}
 }

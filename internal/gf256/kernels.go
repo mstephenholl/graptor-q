@@ -13,9 +13,8 @@ type kernels struct {
 	xor    func(dst, src []byte)         // dst ^= src
 	mul    func(dst, src []byte, c byte) // dst = c * src
 	mulAdd func(dst, src []byte, c byte) // dst ^= c * src
-	// xorN sets dst = srcs[0] ^ ... ^ srcs[n-1] (or dst ^= ... when acc)
-	// for 1 <= n <= 8 sources, reading each source once.
-	xorN func(dst []byte, srcs [][]byte, acc bool)
+	// The fused multi-source XOR is dispatched by xorN (per architecture)
+	// with direct calls, so that its operands do not escape to the heap.
 }
 
 var (
@@ -113,6 +112,53 @@ func ScaleAdd(dst, src []byte, c byte) {
 	}
 }
 
+// HDPCStep performs one step of the HDPC recurrence: z = alpha*z ^ y, then
+// h1 ^= z and h2 ^= z, in a single pass. All slices must have the same
+// length; h1 and h2 may be the same slice (a scratch sink).
+func HDPCStep(z, y, h1, h2 []byte) {
+	checkLen(z, y)
+	checkLen(z, h1)
+	checkLen(z, h2)
+	hdpcStep(z, y, h1, h2)
+}
+
+// XorGather XORs operands gathered from a strided array into dst, reading
+// each operand once. The operands are first (if not nil) and, for each i in
+// idx, base[i*stride : i*stride+len(dst)]. With acc it sets dst ^= the
+// operands, otherwise dst = the operands (zero if there are none). Operands
+// must not overlap dst.
+func XorGather(dst, first, base []byte, stride int, idx []uint16, acc bool) {
+	if len(dst) == 0 {
+		return
+	}
+	if first != nil {
+		_ = first[len(dst)-1]
+	}
+	xorGather(dst, first, base, stride, idx, acc)
+}
+
+// xorGatherGeneric is XorGather with the generic kernels.
+func xorGatherGeneric(dst, first, base []byte, stride int, idx []uint16, acc bool) {
+	n := len(dst)
+	op := func(i uint16) []byte { o := int(i) * stride; return base[o : o+n : o+n] }
+	switch {
+	case acc:
+		if first != nil {
+			xorGeneric(dst, first[:n])
+		}
+	case first != nil:
+		copy(dst, first[:n])
+	case len(idx) > 0:
+		copy(dst, op(idx[0]))
+		idx = idx[1:]
+	default:
+		clear(dst)
+	}
+	for _, i := range idx {
+		xorGeneric(dst, op(i))
+	}
+}
+
 // SetXor sets dst = srcs[0] ^ srcs[1] ^ ..., reading every source once; with
 // no sources dst is cleared. Sources must not overlap dst.
 func SetXor(dst []byte, srcs [][]byte) {
@@ -136,7 +182,7 @@ func xorGroups(dst []byte, srcs [][]byte, acc bool) {
 	}
 	for len(srcs) > 0 {
 		n := min(len(srcs), 8)
-		active.xorN(dst, srcs[:n], acc)
+		xorN(dst, srcs[:n], acc)
 		srcs, acc = srcs[n:], true
 	}
 }

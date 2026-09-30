@@ -11,7 +11,7 @@ import (
 
 // Phase-2 row operations on right-hand sides, recorded for the plan.
 const (
-	p2Xor    uint8 = iota // rhs[dst] ^= rhs[src]
+	p2XorN   uint8 = iota // rhs[dst] ^= rhs[args[a0]] ^ rhs[args[a0+1]] ^ ... ^ rhs[args[a1-1]]
 	p2MulAdd              // rhs[dst] ^= c * rhs[src]
 	p2Scale               // rhs[dst] = c * rhs[dst]
 )
@@ -20,6 +20,7 @@ type p2op struct {
 	kind     uint8
 	c        byte
 	dst, src int32 // phase-2 row ids
+	a0, a1   int32 // p2XorN: source rows p2.args[a0:a1]
 }
 
 // phase2 is the solution of the reduced system over the u columns of U.
@@ -37,14 +38,17 @@ type phase2 struct {
 	colRow []int32 // per U column: the phase-2 row holding its value at the end
 	rowCol []int32 // per phase-2 row: its U column, or -1 if the row is not used
 	ops    []p2op  // live operations only
+	args   []int32 // sources of p2XorN operations
 
 	// scratch
 	words              int      // 64-bit words per U bitset
 	pivBits, candBits  []uint64 // U parts of the pivot and candidate rows
 	hd                 [][]byte // reduced HDPC rows
-	hdWords            []uint64
 	hdBytes            []byte
 	unproc, order, def []int32
+	// pending forward-elimination sources of each binary row, as linked
+	// lists: pendHead[row], then pendNext[entry] (-1 ends); pendSrc[entry]
+	pendHead, pendNext, pendSrc []int32
 }
 
 // run solves the reduced system of ph, reusing the memory of p2.
@@ -58,11 +62,19 @@ func (p2 *phase2) run(ph *phase1) error {
 	p2.colRow = resize(p2.colRow, u)
 	p2.rowCol = filled(p2.rowCol, nb+H, -1)
 	ops := p2.ops[:0]
+	args := p2.args[:0]
+	p2.pendHead = filled(p2.pendHead, nb, -1)
+	pendNext, pendSrc := p2.pendNext[:0], p2.pendSrc[:0]
 
 	// Forward GF(2) elimination over the binary rows. A column without a
 	// binary pivot is deferred to the HDPC rows. An unprocessed row never
 	// has a bit in an earlier column: pivot columns were eliminated from it
 	// and deferred columns had no unprocessed row with that bit.
+	//
+	// A pivot row's right-hand side does not change after it is processed
+	// (during this pass), so the XORs into a row are not recorded one by
+	// one: they are collected and emitted as a single fused operation when
+	// the row itself becomes a pivot, and never if it does not.
 	unproc := resize(p2.unproc, nb)
 	for i := range unproc {
 		unproc[i] = int32(i)
@@ -84,6 +96,13 @@ func (p2 *phase2) run(ph *phase1) error {
 		r := unproc[pi]
 		copy(unproc[pi:], unproc[pi+1:])
 		unproc = unproc[:len(unproc)-1]
+		if e := p2.pendHead[r]; e >= 0 {
+			a0 := int32(len(args))
+			for ; e >= 0; e = pendNext[e] {
+				args = append(args, pendSrc[e])
+			}
+			ops = append(ops, p2op{kind: p2XorN, dst: r, a0: a0, a1: int32(len(args))})
+		}
 		rb := candBits[int(r)*words : int(r+1)*words]
 		for _, t := range unproc {
 			tb := candBits[int(t)*words : int(t+1)*words]
@@ -91,7 +110,9 @@ func (p2 *phase2) run(ph *phase1) error {
 				for k := w; k < words; k++ {
 					tb[k] ^= rb[k]
 				}
-				ops = append(ops, p2op{kind: p2Xor, dst: t, src: r})
+				pendNext = append(pendNext, p2.pendHead[t])
+				pendSrc = append(pendSrc, r)
+				p2.pendHead[t] = int32(len(pendSrc) - 1)
 			}
 		}
 		for h := range H {
@@ -121,7 +142,8 @@ func (p2 *phase2) run(ph *phase1) error {
 			}
 		}
 		if hp < 0 {
-			p2.ops, p2.unproc, p2.order, p2.def = ops, unproc[:0], order, deferred
+			p2.ops, p2.args, p2.unproc, p2.order, p2.def = ops, args, unproc[:0], order, deferred
+			p2.pendNext, p2.pendSrc = pendNext, pendSrc
 			return ErrSingular
 		}
 		if beta := hd[hp][c]; beta != 1 {
@@ -144,12 +166,16 @@ func (p2 *phase2) run(ph *phase1) error {
 		r := order[k]
 		c := int(p2.rowCol[r])
 		rb := candBits[int(r)*words : int(r+1)*words]
+		a0 := int32(len(args))
 		for i, x := range rb {
 			for ; x != 0; x &= x - 1 {
 				if j := i<<6 + bits.TrailingZeros64(x); j != c {
-					ops = append(ops, p2op{kind: p2Xor, dst: r, src: p2.colRow[j]})
+					args = append(args, p2.colRow[j])
 				}
 			}
+		}
+		if a1 := int32(len(args)); a1 > a0 {
+			ops = append(ops, p2op{kind: p2XorN, dst: r, a0: a0, a1: a1})
 		}
 	}
 
@@ -161,7 +187,8 @@ func (p2 *phase2) run(ph *phase1) error {
 			live = append(live, op)
 		}
 	}
-	p2.ops, p2.unproc, p2.order, p2.def = live, unproc[:0], order, deferred
+	p2.ops, p2.args, p2.unproc, p2.order, p2.def = live, args, unproc[:0], order, deferred
+	p2.pendNext, p2.pendSrc = pendNext, pendSrc
 	return nil
 }
 
@@ -230,64 +257,42 @@ func (p2 *phase2) hdpcRows(ph *phase1) {
 	pairs := hdpcPairs(p)
 	pivBits, words := p2.pivBits, p2.words
 
-	// The recurrence runs on 64-bit words holding 8 coefficients each (byte
-	// k of the row is byte k%8 of word k/8, little-endian), so that each
-	// step is one pass: multiplication by alpha is a shift and a conditional
-	// XOR with the low byte of the polynomial.
-	uw := (u + 7) / 8
-	wbuf := zeroed(p2.hdWords, (H+1)*uw)
-	p2.hdWords = wbuf
-	z := wbuf[H*uw:]
-	for j := range n - 1 {
-		for i, x := range z {
-			hi := x & 0x8080808080808080
-			z[i] = (x&^hi)<<1 ^ (hi>>7)*(gf256.Poly&0xFF)
-		}
-		if q := int(ph.colPiv[j]); q >= 0 {
-			// Bit k of the bitset becomes byte k of z: each bitset byte
-			// spreads into one word of z.
-			for i, x := range pivBits[q*words : (q+1)*words] {
-				zw := z[i*8 : min(i*8+8, uw)]
-				for t := range zw {
-					zw[t] ^= spreadBits[byte(x>>(8*t))]
-				}
-			}
-		} else {
-			k := int(ph.uIdx[j])
-			z[k>>3] ^= 1 << (k & 7 * 8)
-		}
-		h1 := wbuf[int(pairs.r1[j])*uw : int(pairs.r1[j]+1)*uw]
-		h2 := wbuf[int(pairs.r2[j])*uw : int(pairs.r2[j]+1)*uw]
-		for i, x := range z {
-			h1[i] ^= x
-			h2[i] ^= x
-		}
-	}
-
-	buf := resize(p2.hdBytes, (H+1)*uw*8)
+	// Rows of u coefficients: the H HDPC rows, z, and x_j (padded to whole
+	// bitset words so that a bitset spreads into it without bounds checks).
+	xlen := words * 64
+	buf := zeroed(p2.hdBytes, (H+1)*u+xlen)
 	p2.hdBytes = buf
-	for i, x := range wbuf {
-		binary.LittleEndian.PutUint64(buf[i*8:], x)
-	}
 	hd := resize(p2.hd, H)
 	p2.hd = hd
 	for h := range hd {
-		hd[h] = buf[h*uw*8 : h*uw*8+u : h*uw*8+u]
+		hd[h] = buf[h*u : (h+1)*u : (h+1)*u]
+	}
+	z := buf[H*u : (H+1)*u]
+	x := buf[(H+1)*u:]
+	setX := func(j int) {
+		if q := int(ph.colPiv[j]); q >= 0 {
+			// Bit k of the pivot's bitset becomes byte k of x.
+			for i, w := range pivBits[q*words : (q+1)*words] {
+				xw := x[i*64 : i*64+64]
+				for t := range 8 {
+					binary.LittleEndian.PutUint64(xw[t*8:], spreadBits[byte(w>>(8*t))])
+				}
+			}
+		} else {
+			clear(x)
+			x[ph.uIdx[j]] = 1
+		}
+	}
+	for j := range n - 1 {
+		setX(j)
+		gf256.HDPCStep(z, x[:u], hd[pairs.r1[j]], hd[pairs.r2[j]])
 	}
 	// The last column: z = alpha*z + X_{n-1}, and MT holds alpha^h in row h.
-	zb := buf[H*uw*8 : H*uw*8+u]
-	gf256.MulSlice(zb, zb, 2)
-	if q := int(ph.colPiv[n-1]); q >= 0 {
-		for i, x := range pivBits[q*words : (q+1)*words] {
-			for ; x != 0; x &= x - 1 {
-				zb[i<<6+bits.TrailingZeros64(x)] ^= 1
-			}
-		}
-	} else {
-		zb[ph.uIdx[n-1]] ^= 1
-	}
+	setX(n - 1)
+	gf256.MulSlice(z, z, 2)
+	gf256.AddSlice(z, x[:u])
 	for h := range H {
-		gf256.MulAddSlice(hd[h], zb, gf256.Exp(h))
+		gf256.MulAddSlice(hd[h], z, gf256.Exp(h))
 		hd[h][ph.uIdx[n+h]] ^= 1
 	}
 }

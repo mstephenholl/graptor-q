@@ -14,22 +14,29 @@ func (p *Params) AppendEncCols(dst []uint16, x uint32) []uint16 {
 
 // AppendTupleCols is AppendEncCols for a precomputed tuple.
 func (p *Params) AppendTupleCols(dst []uint16, t Tuple) []uint16 {
+	// The walks add a step smaller than the modulus to a value smaller than
+	// it, so "% m" is a single conditional subtraction.
 	w, pp, p1 := uint32(p.W), uint32(p.P), uint32(p.P1)
 	b := t.B
 	dst = append(dst, uint16(b))
 	for j := uint32(1); j < t.D; j++ {
-		b = (b + t.A) % w
+		if b += t.A; b >= w {
+			b -= w
+		}
 		dst = append(dst, uint16(b))
 	}
 	b1 := t.B1
-	for b1 >= pp {
-		b1 = (b1 + t.A1) % p1
+	for b1 >= pp { // b1 = (b1 + a1) % P1 until b1 < P
+		if b1 += t.A1; b1 >= p1 {
+			b1 -= p1
+		}
 	}
 	dst = append(dst, uint16(w+b1))
 	for j := uint32(1); j < t.D1; j++ {
-		b1 = (b1 + t.A1) % p1
-		for b1 >= pp {
-			b1 = (b1 + t.A1) % p1
+		for first := true; first || b1 >= pp; first = false {
+			if b1 += t.A1; b1 >= p1 {
+				b1 -= p1
+			}
 		}
 		dst = append(dst, uint16(w+b1))
 	}

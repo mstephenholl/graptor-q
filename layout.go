@@ -93,9 +93,8 @@ func (l *Layout) gather(dst, block []byte, K int) {
 }
 
 // scatter is the inverse of gather: it writes the object bytes of a block
-// (len(block) bytes) from its K symbols.
-func (l *Layout) scatter(block, symbols []byte, K int) {
-	T := l.SymbolSize
+// (len(block) bytes) from its K symbols, symbol m being symbol(m).
+func (l *Layout) scatter(block []byte, symbol func(m int) []byte, K int) {
 	l.subBlocks(func(size, off int) {
 		base := K * off
 		for m := range K {
@@ -103,7 +102,7 @@ func (l *Layout) scatter(block, symbols []byte, K int) {
 			if s >= len(block) {
 				return
 			}
-			copy(block[s:min(s+size, len(block))], symbols[m*T+off:m*T+off+size])
+			copy(block[s:min(s+size, len(block))], symbol(m)[off:off+size])
 		}
 	})
 }
