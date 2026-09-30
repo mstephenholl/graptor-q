@@ -68,14 +68,23 @@ func NewPlan(p *rfc.Params, isis []uint32) (*Plan, error) {
 // internal symbol IDs in want (all of them if want is nil). A decoder that
 // only lacks a few source symbols needs a small fraction of the work.
 func NewPartialPlan(p *rfc.Params, isis []uint32, want []uint32) (*Plan, error) {
-	var w Workspace
+	w, ok := workspaces.Get().(*Workspace)
+	if !ok {
+		w = new(Workspace)
+	}
+	defer workspaces.Put(w)
 	pl, err := w.NewPartialPlan(p, isis, want)
 	if err != nil {
 		return nil, err
 	}
-	q := *pl // detach from the workspace, whose scratch memory can then be freed
+	q := *pl
+	// The plan keeps its memory: the workspace's next plans must not reuse it.
+	w.plan, w.pruned = Plan{}, Plan{}
 	return &q, nil
 }
+
+// workspaces keeps the scratch memory of NewPartialPlan between calls.
+var workspaces = sync.Pool{New: func() any { return new(Workspace) }}
 
 // Prune returns a plan that only computes the intermediate symbols needed to
 // generate the encoding symbols with the internal symbol IDs in want. It

@@ -495,3 +495,39 @@ func TestWorkspaceReuse(t *testing.T) {
 		t.Errorf("%d/%d singular: both outcomes should occur", singular, trials)
 	}
 }
+
+// NewPartialPlan reuses pooled workspaces, but the plans it returns must not
+// share their memory: building more plans (another K', a pruned plan) must
+// leave the earlier ones as a fresh workspace builds them.
+func TestNewPlanIndependent(t *testing.T) {
+	p1, _ := rfc.ForK(1000)
+	p2, _ := rfc.ForK(300)
+	isis1, isis2 := seqISIs(p1.KPrime), seqISIs(p2.KPrime)
+	want := []uint32{3, 5, uint32(p1.KPrime + 100)}
+	build := func(p *rfc.Params, isis, want []uint32) *Plan {
+		t.Helper()
+		pl, err := NewPartialPlan(p, isis, want)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pl
+	}
+	a := build(p1, isis1, nil)
+	b := build(p2, isis2, nil)
+	c := build(p1, isis1, want)
+	build(p1, isis1, nil)
+	for _, x := range []struct {
+		pl         *Plan
+		p          *rfc.Params
+		isis, want []uint32
+	}{{a, p1, isis1, nil}, {b, p2, isis2, nil}, {c, p1, isis1, want}} {
+		var w Workspace
+		fresh, err := w.NewPartialPlan(x.p, x.isis, x.want)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !samePlan(x.pl, fresh) {
+			t.Fatalf("K'=%d want=%v: plan changed after later plans were built", x.p.KPrime, x.want)
+		}
+	}
+}
