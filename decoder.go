@@ -90,10 +90,9 @@ func (d *Decoder) Block(sbn uint8) (*BlockDecoder, error) {
 }
 
 // AddPacket adds an encoding packet: a FEC Payload ID followed by one or
-// more consecutive encoding symbols (RFC 6330 Section 4.4.2). It reports
-// whether the whole object has been decoded. As the RFC allows, the last
-// symbol of a source packet may leave out padding octets at its end; they are
-// restored as zeros.
+// more consecutive encoding symbols (RFC 6330 Section 4.4.2), of which only
+// the last may be short (see AddSymbol). It reports whether the whole object
+// has been decoded.
 func (d *Decoder) AddPacket(pkt []byte) (done bool, err error) {
 	id, err := ParsePayloadID(pkt)
 	if err != nil {
@@ -101,27 +100,12 @@ func (d *Decoder) AddPacket(pkt []byte) (done bool, err error) {
 	}
 	payload := pkt[PayloadIDSize:]
 	T := d.layout.SymbolSize
-	n := (len(payload) + T - 1) / T
-	if n == 0 {
+	if len(payload) == 0 {
 		return d.pending == 0, ErrSymbolSize
 	}
-	if short := n*T - len(payload); short > 0 {
-		if int(id.SBN) >= d.layout.SourceBlocks() {
-			return d.pending == 0, ErrSBNRange
-		}
-		b := d.layout.Block(id.SBN)
-		if last := int(id.ESI) + n - 1; last >= b.K || short > d.layout.trailingPadding(b, last) {
-			return d.pending == 0, ErrSymbolSize
-		}
-	}
-	for i := range n {
-		sym := payload[i*T : min((i+1)*T, len(payload))]
-		if len(sym) < T {
-			full := make([]byte, T)
-			copy(full, sym)
-			sym = full
-		}
-		if done, err = d.AddSymbol(PayloadID{SBN: id.SBN, ESI: id.ESI + uint32(i)}, sym); err != nil {
+	for i := 0; i < len(payload); i += T {
+		sym := payload[i:min(i+T, len(payload))]
+		if done, err = d.AddSymbol(PayloadID{SBN: id.SBN, ESI: id.ESI + uint32(i/T)}, sym); err != nil {
 			return done, err
 		}
 	}
@@ -131,6 +115,10 @@ func (d *Decoder) AddPacket(pkt []byte) (done bool, err error) {
 // AddSymbol adds one encoding symbol. It reports whether the whole object has
 // been decoded. A block that fails to decode for lack of symbols is not an
 // error: decoding is retried as more symbols arrive.
+//
+// A source symbol that ends with padding octets may leave them out, as RFC
+// 6330 Section 4.4.2 allows (see WithTrimmedPadding); they are restored as
+// zeros. Leaving out anything else is an ErrSymbolSize error.
 func (d *Decoder) AddSymbol(id PayloadID, sym []byte) (done bool, err error) {
 	b, err := d.Block(id.SBN)
 	if err != nil {
@@ -138,6 +126,11 @@ func (d *Decoder) AddSymbol(id PayloadID, sym []byte) (done bool, err error) {
 	}
 	if b.decoded {
 		return d.pending == 0, nil
+	}
+	if len(sym) < d.layout.SymbolSize {
+		if sym, err = d.restorePadding(id, sym); err != nil {
+			return d.pending == 0, err
+		}
 	}
 	added, err := b.AddSymbol(id.ESI, sym)
 	if err != nil || !added {
@@ -154,6 +147,19 @@ func (d *Decoder) AddSymbol(id PayloadID, sym []byte) (done bool, err error) {
 		}
 	}
 	return d.pending == 0, nil
+}
+
+// restorePadding returns source symbol id, received without the padding at
+// its end, with the padding restored.
+func (d *Decoder) restorePadding(id PayloadID, sym []byte) ([]byte, error) {
+	b := d.layout.Block(id.SBN)
+	missing := d.layout.SymbolSize - len(sym)
+	if int(id.ESI) >= b.K || missing > d.layout.trailingPadding(b, int(id.ESI)) {
+		return nil, ErrSymbolSize
+	}
+	full := make([]byte, d.layout.SymbolSize)
+	copy(full, sym)
+	return full, nil
 }
 
 // writeOut writes decoded block sbn to the WriterAt, if there is one, and

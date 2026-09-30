@@ -228,6 +228,9 @@ func TestShortenedPackets(t *testing.T) {
 		shortened := 0
 		for sbn := range l.SourceBlocks() {
 			b := l.Block(uint8(sbn))
+			// Before the block decodes: symbols of decoded blocks are ignored.
+			repair, _ := enc.AppendPacket(nil, PayloadID{uint8(sbn), uint32(b.K)})
+			reject(repair[:len(repair)-1], ErrSymbolSize)
 			for esi := range uint32(b.K) {
 				pkt, _ := enc.AppendPacket(nil, PayloadID{uint8(sbn), esi})
 				pad := l.trailingPadding(b, int(esi))
@@ -242,8 +245,6 @@ func TestShortenedPackets(t *testing.T) {
 				add(pkt[:len(pkt)-pad])
 				shortened++
 			}
-			repair, _ := enc.AppendPacket(nil, PayloadID{uint8(sbn), uint32(b.K)})
-			reject(repair[:len(repair)-1], ErrSymbolSize)
 			for esi := uint32(b.K); ; esi++ {
 				if blk, _ := dec.Block(uint8(sbn)); blk.Decoded() {
 					break
@@ -270,6 +271,74 @@ func TestShortenedPackets(t *testing.T) {
 		add(group[:len(group)-pad])
 		bad, _ := PayloadID{uint8(l.SourceBlocks()), 0}.AppendBinary(nil)
 		reject(append(bad, make([]byte, l.SymbolSize-1)...), ErrSBNRange)
+	}
+}
+
+// With WithTrimmedPadding, an Encoder returns each source symbol without the
+// padding at its end (in a group, only the last symbol), and the trimmed
+// symbols decode through AddSymbol with other source symbols lost.
+func TestTrimmedPadding(t *testing.T) {
+	rng := rand.New(rand.NewPCG(119, 120))
+	trimmed := 0
+	for trial := range 60 {
+		oti := randomOTI(rng)
+		if trial%2 == 0 { // small objects: padding in several symbols
+			oti.TransferLength = 1 + rng.Uint64N(4*uint64(oti.SymbolSize))
+			oti.SourceBlocks = 1
+		}
+		data := randomData(rng, oti.TransferLength)
+		enc, err := NewEncoder(data, oti, WithTrimmedPadding())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ref, _ := NewEncoder(data, oti)
+		l := enc.Layout()
+		T := l.SymbolSize
+		for sbn := range l.SourceBlocks() {
+			b := l.Block(uint8(sbn))
+			for esi := uint32(max(b.K-6, 0)); esi < uint32(b.K+2); esi++ {
+				id := PayloadID{uint8(sbn), esi}
+				pad := 0
+				if int(esi) < b.K {
+					pad = l.trailingPadding(b, int(esi))
+				}
+				full, _ := ref.AppendSymbol(nil, id)
+				if got, _ := enc.AppendSymbol(nil, id); !bytes.Equal(got, full[:T-pad]) {
+					t.Fatalf("%+v %+v: AppendSymbol is %d bytes, want %d", oti, id, len(got), T-pad)
+				}
+				want, _ := id.AppendBinary(nil)
+				want = append(want, full[:T-pad]...)
+				if got, _ := enc.AppendPacket(nil, id); !bytes.Equal(got, want) {
+					t.Fatalf("%+v %+v: AppendPacket differs", oti, id)
+				}
+				first := PayloadID{id.SBN, esi - min(esi, 2)}
+				n := int(esi-first.ESI) + 1
+				group, _ := ref.AppendSymbols(nil, first, n)
+				if got, _ := enc.AppendSymbols(nil, first, n); !bytes.Equal(got, group[:len(group)-pad]) {
+					t.Fatalf("%+v %+v: AppendSymbols(%d) differs", oti, first, n)
+				}
+			}
+		}
+
+		dec, _ := NewDecoder(oti)
+		for id, sym := range enc.Packets(l.KL/3 + 10) {
+			if len(sym) < T {
+				trimmed++
+			} else if int(id.ESI) < l.Block(id.SBN).K && rng.IntN(5) == 0 {
+				continue // lost
+			}
+			if done, err := dec.AddSymbol(id, sym); err != nil {
+				t.Fatalf("%+v %+v: %v", oti, id, err)
+			} else if done {
+				break
+			}
+		}
+		if got, err := dec.AppendObject(nil); err != nil || !bytes.Equal(got, data) {
+			t.Fatalf("%+v: decoded object differs (%v)", oti, err)
+		}
+	}
+	if trimmed == 0 {
+		t.Fatal("no symbol was trimmed")
 	}
 }
 

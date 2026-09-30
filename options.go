@@ -12,6 +12,7 @@ type options struct {
 	maxMemory   int64
 	blockCache  int // 0: default, > 0: limit, < 0: unlimited
 	maxOverhead int // symbols beyond K stored per source block, < 0: unlimited
+	trimPadding bool
 }
 
 func buildOptions(opts []Option) options {
@@ -78,4 +79,16 @@ func WithMaxOverhead(n int) Option {
 // Decoders of untrusted OTIs should set a limit.
 func WithMaxMemory(bytes int64) Option {
 	return func(o *options) { o.maxMemory = bytes }
+}
+
+// WithTrimmedPadding makes an Encoder leave out the padding octets at the end
+// of source symbols, as RFC 6330 Section 4.4.2 allows: AppendSymbol,
+// AppendPacket and Packets return such symbols shorter than the symbol size,
+// and AppendSymbols shortens the last symbol of the group. Padding only
+// exists when the transfer length is not a multiple of the symbol size; it
+// ends the last symbol of the last source block, and with sub-blocks the last
+// few. Receivers must accept shortened symbols; graptorq's Decoder does.
+// BlockEncoders ignore this option.
+func WithTrimmedPadding() Option {
+	return func(o *options) { o.trimPadding = true }
 }

@@ -208,24 +208,45 @@ func parallel(ctx context.Context, n, limit int, f func(i int) error) error {
 	return first
 }
 
-// AppendSymbol appends the encoding symbol identified by id to dst.
+// AppendSymbol appends the encoding symbol identified by id to dst, without
+// its padding with WithTrimmedPadding.
 func (e *Encoder) AppendSymbol(dst []byte, id PayloadID) ([]byte, error) {
 	b, err := e.Block(id.SBN)
 	if err != nil {
 		return dst, err
 	}
-	return b.AppendSymbol(dst, id.ESI)
+	if dst, err = b.AppendSymbol(dst, id.ESI); err != nil {
+		return dst, err
+	}
+	return e.trim(dst, id), nil
 }
 
 // AppendSymbols appends the n consecutive encoding symbols of source block
 // id.SBN starting at ESI id.ESI; with id's Payload ID in front they form a
-// packet carrying several symbols (RFC 6330 Section 4.4.2).
+// packet carrying several symbols (RFC 6330 Section 4.4.2). With
+// WithTrimmedPadding, the last symbol is appended without its padding.
 func (e *Encoder) AppendSymbols(dst []byte, id PayloadID, n int) ([]byte, error) {
 	b, err := e.Block(id.SBN)
 	if err != nil {
 		return dst, err
 	}
-	return b.AppendSymbols(dst, id.ESI, n)
+	if dst, err = b.AppendSymbols(dst, id.ESI, n); err != nil || n == 0 {
+		return dst, err
+	}
+	return e.trim(dst, PayloadID{SBN: id.SBN, ESI: id.ESI + uint32(n-1)}), nil
+}
+
+// trim removes the padding at the end of symbol id, which ends dst, if the
+// encoder leaves padding out.
+func (e *Encoder) trim(dst []byte, id PayloadID) []byte {
+	if !e.o.trimPadding {
+		return dst
+	}
+	b := e.layout.Block(id.SBN)
+	if int(id.ESI) >= b.K {
+		return dst
+	}
+	return dst[:len(dst)-e.layout.trailingPadding(b, int(id.ESI))]
 }
 
 // AppendPacket appends an encoding packet (RFC 6330 Section 4.4.2): the FEC
@@ -244,9 +265,10 @@ func (e *Encoder) AppendPacket(dst []byte, id PayloadID) ([]byte, error) {
 }
 
 // Packets yields, for every source block in order, its K source symbols
-// followed by repairPerBlock repair symbols. The yielded symbol slice is
-// reused between iterations. Iteration stops early if a block cannot be
-// read or encoded; Err then reports why.
+// followed by repairPerBlock repair symbols (source symbols without their
+// padding with WithTrimmedPadding). The yielded symbol slice is reused
+// between iterations. Iteration stops early if a block cannot be read or
+// encoded; Err then reports why.
 func (e *Encoder) Packets(repairPerBlock int) iter.Seq2[PayloadID, []byte] {
 	return func(yield func(PayloadID, []byte) bool) {
 		e.setErr(nil)
@@ -263,7 +285,7 @@ func (e *Encoder) Packets(repairPerBlock int) iter.Seq2[PayloadID, []byte] {
 					e.setErr(err)
 					return
 				}
-				if !yield(id, buf) {
+				if !yield(id, e.trim(buf, id)) {
 					return
 				}
 			}

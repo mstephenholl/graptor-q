@@ -107,47 +107,70 @@ func testOTIs(rng *rand.Rand, n int) []graptorq.OTI {
 }
 
 // raptorgo and graptorq must produce byte-identical packets for the same
-// object, source and repair, single symbols and groups.
+// object, source and repair, single symbols and groups, with and without the
+// padding at the end of source symbols (raptorgo's shortenFinal, graptorq's
+// WithTrimmedPadding). With sub-blocks, several of the last source symbols
+// can end with padding, so packets end at each of the last six.
 func TestRaptorgoPacketDiff(t *testing.T) {
 	rng := rand.New(rand.NewPCG(43, 44))
+	trimmed := 0
 	for i, oti := range testOTIs(rng, 20) {
 		data := testutil.PatternData(int(oti.TransferLength), uint64(i))
-		ge, err := graptorq.NewEncoder(data, oti)
-		if err != nil {
-			t.Fatal(err)
-		}
 		re, err := rg.NewObjectEncoder(data, rgOTI(oti), rg.RFCWireLimits())
 		if err != nil {
 			t.Fatal(err)
 		}
-		l := ge.Layout()
-		for sbn := range l.SourceBlocks() {
-			K := uint32(l.Block(uint8(sbn)).K)
-			g := min(3, K)
-			for _, c := range []struct{ esi, n uint32 }{
-				{0, 1}, {K - 1, 1}, {0, g}, {K - g, g}, // source
-				{K, 1}, {K + 5, 4}, {graptorq.MaxESI, 1}, {graptorq.MaxESI - 3, 4}, // repair
-			} {
-				want, err := re.Packet(uint8(sbn), c.esi, c.n, false)
-				if err != nil {
-					t.Fatal(err)
+		for _, trim := range []bool{false, true} {
+			var opts []graptorq.Option
+			if trim {
+				opts = append(opts, graptorq.WithTrimmedPadding())
+			}
+			ge, err := graptorq.NewEncoder(data, oti, opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			l := ge.Layout()
+			for sbn := range l.SourceBlocks() {
+				K := uint32(l.Block(uint8(sbn)).K)
+				g := min(3, K)
+				cases := []struct{ esi, n uint32 }{
+					{0, 1}, {0, g}, // source
+					{K, 1}, {K + 5, 4}, {graptorq.MaxESI, 1}, {graptorq.MaxESI - 3, 4}, // repair
 				}
-				id := graptorq.PayloadID{SBN: uint8(sbn), ESI: c.esi}
-				got, _ := id.AppendBinary(nil)
-				if got, err = ge.AppendSymbols(got, id, int(c.n)); err != nil {
-					t.Fatal(err)
+				for j := uint32(1); j <= min(6, K); j++ { // ending at source symbol K-j
+					cases = append(cases, struct{ esi, n uint32 }{K - j, 1})
+					cases = append(cases, struct{ esi, n uint32 }{K - j - min(2, K-j), min(2, K-j) + 1})
 				}
-				if !bytes.Equal(got, want) {
-					t.Fatalf("%+v SBN=%d ESI=%d n=%d: packets differ", oti, sbn, c.esi, c.n)
+				for _, c := range cases {
+					want, err := re.Packet(uint8(sbn), c.esi, c.n, trim)
+					if err != nil {
+						t.Fatal(err)
+					}
+					id := graptorq.PayloadID{SBN: uint8(sbn), ESI: c.esi}
+					got, _ := id.AppendBinary(nil)
+					if got, err = ge.AppendSymbols(got, id, int(c.n)); err != nil {
+						t.Fatal(err)
+					}
+					if !bytes.Equal(got, want) {
+						t.Fatalf("%+v trim=%v SBN=%d ESI=%d n=%d: packets differ (%d and %d bytes)", oti, trim, sbn, c.esi, c.n, len(got), len(want))
+					}
+					if len(got) < graptorq.PayloadIDSize+int(c.n)*l.SymbolSize {
+						trimmed++
+					}
 				}
 			}
 		}
 	}
+	if trimmed == 0 {
+		t.Fatal("no packet was trimmed")
+	}
+	t.Logf("%d trimmed packets", trimmed)
 }
 
 // Objects encoded by one implementation must decode with the other, in both
 // directions: packets of one to four symbols, source packets lost at random,
-// then repair packets until the block decodes.
+// then repair packets until the block decodes. Odd trials leave out the
+// padding at the end of source symbols.
 func TestRaptorgoCrossDecode(t *testing.T) {
 	rng := rand.New(rand.NewPCG(45, 46))
 	n := 30
@@ -182,8 +205,15 @@ func TestRaptorgoCrossDecode(t *testing.T) {
 			}
 		}
 
+		// Odd trials leave out the padding at the end of source symbols.
+		trim := i%2 == 1
+		var opts []graptorq.Option
+		if trim {
+			opts = append(opts, graptorq.WithTrimmedPadding())
+		}
+
 		// graptorq encodes, raptorgo decodes.
-		ge, err := graptorq.NewEncoder(data, oti)
+		ge, err := graptorq.NewEncoder(data, oti, opts...)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -234,7 +264,7 @@ func TestRaptorgoCrossDecode(t *testing.T) {
 			t.Fatal(err)
 		}
 		send(func(sbn uint8, esi, n uint32) []byte {
-			pkt, err := re.Packet(sbn, esi, n, false)
+			pkt, err := re.Packet(sbn, esi, n, trim)
 			if err != nil {
 				t.Fatal(err)
 			}
