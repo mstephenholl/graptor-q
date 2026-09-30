@@ -36,9 +36,12 @@ object, err = dec.AppendObject(nil)
   | Tier | Selection | MulAdd throughput (16 KiB, one core) |
   |---|---|---|
   | GFNI (`VGF2P8AFFINEQB`) | amd64 with AVX2 and GFNI | 74 GB/s |
-  | AVX2 (`VPSHUFB` nibble tables) | amd64 with AVX2 | 32 GB/s |
+  | AVX2 (`VPSHUFB` nibble tables) | amd64 with AVX2 | 45 GB/s |
+  | SSSE3 (`PSHUFB` nibble tables) | amd64 with SSSE3 but no AVX2 | 27 GB/s |
   | NEON (`TBL` nibble tables) | arm64 | — |
   | Generic Go | always; forced with `-tags purego` | 3 GB/s |
+
+  The best supported tier is chosen at startup. `GRAPTORQ_GF256=<tier>` forces a tier for testing; `make test-tiers` runs the suite on each one.
 
   Note that `GF2P8MULB` cannot be used: it hard-codes the AES polynomial 0x11B, and RFC 6330 uses 0x11D.
 - **No dependencies.** CPU features are detected with CPUID directly, because `x/sys/cpu` cannot report GFNI without AVX-512.

@@ -50,10 +50,26 @@ Decoding K = 10,000, T = 1280 with 10% loss (about 18.7 ms) breaks down as:
 
 Pin to one performance core. On hybrid CPUs, hyperthread siblings make results noisy.
 
+## AVX-512 kernel tier
+
+**Status:** planned. The development machine (Intel Core Ultra 7 155U) has no
+AVX-512, and QEMU cannot emulate it (it also hides GFNI), so the tier cannot
+be tested natively yet.
+
+**Expected benefit:** 64-byte vectors and `VPTERNLOGD` three-way XOR. The gain
+will be largest on cache-resident work: the multiply-add kernels, the HDPC
+step, and small blocks. It will be smaller on large decodes, which are limited
+by memory bandwidth. EVEX-encoded GFNI on 512-bit registers comes for free.
+
+**Plan:**
+- **Kernels:** AVX-512 variants of xor, mul, mulAdd, the fused XOR/gather and the HDPC step, as a new tier. Select it with the CPUID leaf 7 AVX-512F and AVX-512BW bits, plus the XGETBV opmask/ZMM state bits (XCR0 bits 5–7).
+- **Local validation with Intel SDE** (Software Development Emulator). Downloading it requires accepting Intel's end-user license agreement. Then run `go test -exec "sde64 -spr --" ./internal/gf256/ ./internal/solver/ .` with the tier forced (`GRAPTORQ_GF256=avx512`). SDE also emulates GFNI.
+- **CI validation on GitHub-hosted runners**, which usually have AVX-512. Add a job that runs `make test-tiers` including the new tier; `TestEnvTier` reports it as skipped when the runner's CPU lacks it. Optionally also run the SDE job in CI, so coverage does not depend on the runner's CPU.
+- **Hardware:** an AVX-512-capable development machine would allow native testing and benchmarking. Examples are AMD Zen 4/Zen 5 laptops and workstations, or cloud Xeon/EPYC instances.
+
 ## Other known gaps
 
 - **Streaming large objects:** `Encoder` from an `io.ReaderAt` and `Decoder` to an `io.WriterAt`, for objects larger than memory.
 - **API:** `BlockEncoder.AppendRepair`, and a `WithMaxOverhead` limit on stored repair symbols.
 - **CI:** the workflows in `.github/workflows` have not run yet. That includes the native arm64 job and the nightly statistics and fuzzing jobs.
-- **Kernel tiers:** SSSE3 for older x86 CPUs without AVX2, and AVX-512.
 - **Project:** choose a license; review the RFC 6330 IPR disclosures; report the xssnick P1 deviation upstream (see the README).

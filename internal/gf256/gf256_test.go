@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/mholland/graptorq/internal/rfc/rfctext"
@@ -354,6 +355,22 @@ func TestXorGather(t *testing.T) {
 			}
 		}
 	})
+}
+
+// With GRAPTORQ_GF256 set, the named tier must be the active one, so that a
+// test run meant for one tier cannot silently run on another. Unsupported
+// tiers fall back to the default and are reported as skipped.
+func TestEnvTier(t *testing.T) {
+	want := os.Getenv("GRAPTORQ_GF256")
+	if want == "" {
+		t.Skip("GRAPTORQ_GF256 not set")
+	}
+	if !slices.Contains(Tiers(), want) {
+		t.Skipf("tier %q is not supported on this CPU (supported: %v)", want, Tiers())
+	}
+	if Active() != want {
+		t.Fatalf("GRAPTORQ_GF256=%s but the active tier is %s", want, Active())
+	}
 }
 
 func TestLengthMismatchPanics(t *testing.T) {

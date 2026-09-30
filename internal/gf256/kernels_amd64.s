@@ -361,3 +361,232 @@ hdloop:
 	JB       hdloop
 	VZEROUPPER
 	RET
+
+// SSSE3 tier (for CPUs without AVX2), 16 bytes per register. Legacy SSE
+// instructions require aligned memory operands, so every load uses MOVOU.
+// All kernels require n (or len(src)) to be a positive multiple of 16.
+
+DATA nibbleMask<>+0(SB)/8, $0x0f0f0f0f0f0f0f0f
+DATA nibbleMask<>+8(SB)/8, $0x0f0f0f0f0f0f0f0f
+GLOBL nibbleMask<>(SB), RODATA|NOPTR, $16
+
+DATA polyLow<>+0(SB)/8, $0x1d1d1d1d1d1d1d1d
+DATA polyLow<>+8(SB)/8, $0x1d1d1d1d1d1d1d1d
+GLOBL polyLow<>(SB), RODATA|NOPTR, $16
+
+// func xorSSE2(dst, src []byte)
+TEXT ·xorSSE2(SB), NOSPLIT, $0-48
+	MOVQ dst_base+0(FP), DI
+	MOVQ src_base+24(FP), SI
+	MOVQ src_len+32(FP), CX
+	SHRQ $4, CX
+
+sx64:
+	CMPQ  CX, $4
+	JB    sx16
+	MOVOU (SI), X0
+	MOVOU 16(SI), X1
+	MOVOU 32(SI), X2
+	MOVOU 48(SI), X3
+	MOVOU (DI), X4
+	MOVOU 16(DI), X5
+	MOVOU 32(DI), X6
+	MOVOU 48(DI), X7
+	PXOR  X4, X0
+	PXOR  X5, X1
+	PXOR  X6, X2
+	PXOR  X7, X3
+	MOVOU X0, (DI)
+	MOVOU X1, 16(DI)
+	MOVOU X2, 32(DI)
+	MOVOU X3, 48(DI)
+	ADDQ  $64, SI
+	ADDQ  $64, DI
+	SUBQ  $4, CX
+	JMP   sx64
+
+sx16:
+	TESTQ CX, CX
+	JZ    sxdone
+	MOVOU (SI), X0
+	MOVOU (DI), X4
+	PXOR  X4, X0
+	MOVOU X0, (DI)
+	ADDQ  $16, SI
+	ADDQ  $16, DI
+	DECQ  CX
+	JMP   sx16
+
+sxdone:
+	RET
+
+// Nibble-table multiplication: c*x = lo[x & 15] ^ hi[x >> 4].
+
+// func mulSSSE3(dst, src []byte, tbl *[32]byte)
+TEXT ·mulSSSE3(SB), NOSPLIT, $0-56
+	MOVQ  tbl+48(FP), AX
+	MOVOU (AX), X6
+	MOVOU 16(AX), X7
+	MOVOU nibbleMask<>(SB), X8
+	MOVQ  dst_base+0(FP), DI
+	MOVQ  src_base+24(FP), SI
+	MOVQ  src_len+32(FP), CX
+	SHRQ  $4, CX
+
+smloop:
+	MOVOU  (SI), X0
+	MOVOU  X0, X1
+	PSRLQ  $4, X1
+	PAND   X8, X0
+	PAND   X8, X1
+	MOVOU  X6, X2
+	PSHUFB X0, X2
+	MOVOU  X7, X3
+	PSHUFB X1, X3
+	PXOR   X3, X2
+	MOVOU  X2, (DI)
+	ADDQ   $16, SI
+	ADDQ   $16, DI
+	DECQ   CX
+	JNZ    smloop
+	RET
+
+// func mulAddSSSE3(dst, src []byte, tbl *[32]byte)
+TEXT ·mulAddSSSE3(SB), NOSPLIT, $0-56
+	MOVQ  tbl+48(FP), AX
+	MOVOU (AX), X6
+	MOVOU 16(AX), X7
+	MOVOU nibbleMask<>(SB), X8
+	MOVQ  dst_base+0(FP), DI
+	MOVQ  src_base+24(FP), SI
+	MOVQ  src_len+32(FP), CX
+	SHRQ  $4, CX
+
+smaloop:
+	MOVOU  (SI), X0
+	MOVOU  X0, X1
+	PSRLQ  $4, X1
+	PAND   X8, X0
+	PAND   X8, X1
+	MOVOU  X6, X2
+	PSHUFB X0, X2
+	MOVOU  X7, X3
+	PSHUFB X1, X3
+	PXOR   X3, X2
+	MOVOU  (DI), X4
+	PXOR   X4, X2
+	MOVOU  X2, (DI)
+	ADDQ   $16, SI
+	ADDQ   $16, DI
+	DECQ   CX
+	JNZ    smaloop
+	RET
+
+// Fused XOR of up to 8 sources, 32 bytes then 16 bytes at a time.
+
+// func xorNSSE2(dst *byte, srcs *[8]*byte, nsrc int, n int, acc bool)
+TEXT ·xorNSSE2(SB), NOSPLIT, $0-33
+	MOVQ    dst+0(FP), DI
+	MOVQ    srcs+8(FP), R8
+	MOVQ    nsrc+16(FP), R9
+	MOVQ    n+24(FP), CX
+	MOVBLZX acc+32(FP), R10
+	XORQ    AX, AX
+
+sxn32:
+	LEAQ  32(AX), DX
+	CMPQ  DX, CX
+	JA    sxn16
+	TESTQ R10, R10
+	JZ    sxn32first
+	MOVOU (DI)(AX*1), X0
+	MOVOU 16(DI)(AX*1), X1
+	XORQ  BX, BX
+	JMP   sxn32src
+
+sxn32first:
+	MOVQ  (R8), SI
+	MOVOU (SI)(AX*1), X0
+	MOVOU 16(SI)(AX*1), X1
+	MOVQ  $1, BX
+
+sxn32src:
+	CMPQ  BX, R9
+	JAE   sxn32store
+	MOVQ  (R8)(BX*8), SI
+	MOVOU (SI)(AX*1), X2
+	MOVOU 16(SI)(AX*1), X3
+	PXOR  X2, X0
+	PXOR  X3, X1
+	INCQ  BX
+	JMP   sxn32src
+
+sxn32store:
+	MOVOU X0, (DI)(AX*1)
+	MOVOU X1, 16(DI)(AX*1)
+	MOVQ  DX, AX
+	JMP   sxn32
+
+sxn16:
+	CMPQ  AX, CX
+	JAE   sxndone
+	TESTQ R10, R10
+	JZ    sxn16first
+	MOVOU (DI)(AX*1), X0
+	XORQ  BX, BX
+	JMP   sxn16src
+
+sxn16first:
+	MOVQ  (R8), SI
+	MOVOU (SI)(AX*1), X0
+	MOVQ  $1, BX
+
+sxn16src:
+	CMPQ  BX, R9
+	JAE   sxn16store
+	MOVQ  (R8)(BX*8), SI
+	MOVOU (SI)(AX*1), X2
+	PXOR  X2, X0
+	INCQ  BX
+	JMP   sxn16src
+
+sxn16store:
+	MOVOU X0, (DI)(AX*1)
+
+sxndone:
+	RET
+
+// One step of the HDPC recurrence, 16 bytes at a time: z = alpha*z ^ y,
+// h1 ^= z, h2 ^= z. PCMPGTB against zero selects the bytes whose high bit is
+// set, which get 0x1D after doubling (PADDB). h1 and h2 may be the same.
+
+// func hdpcStepSSE2(z, y, h1, h2 *byte, n int)
+TEXT ·hdpcStepSSE2(SB), NOSPLIT, $0-40
+	MOVQ  z+0(FP), DI
+	MOVQ  y+8(FP), SI
+	MOVQ  h1+16(FP), R8
+	MOVQ  h2+24(FP), R9
+	MOVQ  n+32(FP), CX
+	MOVOU polyLow<>(SB), X7
+	XORQ  BX, BX
+
+shdloop:
+	MOVOU   (DI)(BX*1), X0
+	PXOR    X1, X1
+	PCMPGTB X0, X1
+	PADDB   X0, X0
+	PAND    X7, X1
+	PXOR    X1, X0
+	MOVOU   (SI)(BX*1), X2
+	PXOR    X2, X0
+	MOVOU   X0, (DI)(BX*1)
+	MOVOU   (R8)(BX*1), X3
+	PXOR    X0, X3
+	MOVOU   X3, (R8)(BX*1)
+	MOVOU   (R9)(BX*1), X4
+	PXOR    X0, X4
+	MOVOU   X4, (R9)(BX*1)
+	ADDQ    $16, BX
+	CMPQ    BX, CX
+	JB      shdloop
+	RET

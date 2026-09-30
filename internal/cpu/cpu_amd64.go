@@ -8,10 +8,14 @@ func xgetbv() (eax, edx uint32)
 
 func init() {
 	maxID, _, _, _ := cpuid(0, 0)
-	if maxID < 7 {
+	if maxID < 1 {
 		return
 	}
 	_, _, ecx1, _ := cpuid(1, 0)
+	X86.HasSSSE3 = ecx1&(1<<9) != 0
+	if maxID < 7 {
+		return
+	}
 	osxsave := ecx1&(1<<27) != 0
 	avx := ecx1&(1<<28) != 0
 	if !osxsave || !avx {

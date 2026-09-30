@@ -13,7 +13,7 @@ ORACLE_TARGET := oracle
 endif
 
 .PHONY: all test test-short test-purego test-race test-cross vet generate check-generate \
-        oracle oracle-docker oracle-vectors interop bench bench-compare stat-long fuzz
+        test-tiers oracle oracle-docker oracle-vectors interop bench bench-compare stat-long fuzz
 
 all: vet test
 
@@ -29,6 +29,12 @@ test-purego:
 
 test-race:
 	go test -race -short ./...
+
+# The whole suite with each amd64 kernel tier forced (TestEnvTier reports
+# tiers this CPU does not support as skipped).
+TIERS ?= generic ssse3 avx2 gfni
+test-tiers:
+	for t in $(TIERS); do echo "== tier $$t"; GRAPTORQ_GF256=$$t go test -short ./... || exit 1; done
 
 # arm64 (NEON kernels) and s390x (big-endian) under qemu-user, plus 32-bit x86.
 test-cross:

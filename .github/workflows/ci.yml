@@ -19,6 +19,7 @@ jobs:
       - run: go test ./...
       - run: make test-purego
       - run: make test-race
+      - run: make test-tiers
       - run: make check-generate
 
   cross:
