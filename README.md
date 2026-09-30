@@ -62,6 +62,8 @@ object, err = dec.AppendObject(nil)
 | **cberner/raptorq 2.0.1 golden vectors** (`tools/rqoracle`, committed as `testdata/vectors`) | Byte-exact encoding symbols for 49 objects (3,938 symbols): Z up to 255, N up to 32 with TL≠TS, K up to 56,403, ESI 2²⁴−1. Also decoding of cberner packets, and identical §4.3 derivations |
 | Live cberner interop (`make interop`) | Both directions, plus the first two repair symbols compared at **every K'** |
 | **xssnick/raptorq v1.5.2 differential** (`interop/`) | Identical symbols at 378 of 477 K'; cross-decoding in both directions (see the finding below) |
+| **takeyourhatoff/raptorq differential** (`interop/`) | Identical symbols at all 477 K', with and without its SIMD kernels. It derives from xssnick/raptorq but does not share its P1 deviation. Cross-decoding in both directions |
+| **fgn/raptorgo v0.1.1 differential** (`interop/`), an independent implementation with the object layer | Identical §4.3 derivations for 52,608 inputs. Byte-identical packets, single and grouped, source and repair, for 20 objects with Z up to 5, N up to 13 and Al from 1 to 8. Cross-decoding of whole objects in both directions |
 | §5.8 recovery properties, with ESIs uniform over 0..2²⁴−1 (`make stat-long`) | Failures at K' symbols: 491/10⁵ = 0.49% (bound 1%). At K'+1: 4/(3×10⁵) = 1.3×10⁻⁵ (bound 10⁻⁴). At K'+2: 0/10⁶ (bound 10⁻⁶) |
 | Fuzzing: OTI parsing, garbage packets, block round trips | Robustness on untrusted input |
 | Platforms: amd64, `purego`, arm64 under qemu (a native arm64 CI job is configured but has not run yet), s390x (big-endian, qemu), 386 | Portability |
@@ -86,24 +88,32 @@ round-trips with itself, but it does not interoperate at those block sizes.
 ## Performance
 
 Single core (Intel Core Ultra 7 155U P-core, GOMAXPROCS=1), MB/s of source
-data, median of 5 runs.
+data, median of 5 runs, Go 1.27.1.
 
-- **Encode:** build the encoder, then generate one repair symbol.
-- **Decode:** lose 10% of the source symbols, replace them with that many repair symbols plus two, decode, and deliver the block into a reused buffer (`AppendSource` for graptorq, `DecodeInto` for xssnick).
+- **Encode:** build the encoder for a new block, then generate one repair symbol. The solution procedure depends only on K', and two libraries can reuse it across blocks: graptorq through its plan cache (the default) and takeyourhatoff through `Encoder.Reset`. The "from scratch" rows solve every block anew (`WithoutPlanCache()` for graptorq, a new `Encoder` for takeyourhatoff), as xssnick, raptorgo and cberner always do.
+- **Decode:** lose 10% of the source symbols, replace them with that many repair symbols plus two, decode, and deliver the block into a reused buffer. raptorgo cannot reuse a decoder, so its figures include creating one per block.
+- **SIMD builds:** takeyourhatoff and raptorgo are measured with their SIMD kernels (AVX2 on this CPU; takeyourhatoff also has AVX-512 kernels), built with `GOEXPERIMENT=simd GOAMD64=v3`. raptorgo's need Go 1.26 and were measured with Go 1.26.5. Without the experiment they reach 43–153 MB/s (takeyourhatoff) and 7–63 MB/s (raptorgo). graptorq and xssnick do not use the experiment; their figures change by at most 5% under it.
+- **raptorgo** only has an object API, so its figures use an OTI with a single source block. graptorq's object API is within 4% of its block API on the same benchmarks.
 
-| | K | T | graptorq | xssnick v1.5.2 | cberner 2.0.1 |
-|---|---:|---:|---:|---:|---:|
-| encode | 100 | 1280 | **2686** | 877 | 1445 |
-| encode | 1000 | 1280 | **2544** | 748 | 1079 |
-| encode | 10000 | 1280 | **1011** | 478 | 635 |
-| encode | 50000 | 256 | **513** | 107 | 337 |
-| decode | 100 | 1280 | **1972** | 878 | 617 |
-| decode | 1000 | 1280 | **1374** | 795 | 545 |
-| decode | 10000 | 1280 | **684** | 461 | 369 |
-| decode | 50000 | 256 | **212** | 106 | 75 |
+| | K | T | graptorq | xssnick v1.5.2 | takeyourhatoff | raptorgo v0.1.1 | cberner 2.0.1 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| encode, plan reused | 100 | 1280 | **2699** | – | 1483 | – | – |
+| encode, plan reused | 1000 | 1280 | **2638** | – | 1398 | – | – |
+| encode, plan reused | 10000 | 1280 | **1036** | – | 760 | – | – |
+| encode, plan reused | 50000 | 256 | **525** | – | 452 | – | – |
+| encode, from scratch | 100 | 1280 | 1434 | 889 | 800 | 263 | **1445** |
+| encode, from scratch | 1000 | 1280 | **1332** | 776 | 703 | 185 | 1079 |
+| encode, from scratch | 10000 | 1280 | **720** | 491 | 489 | 118 | 635 |
+| encode, from scratch | 50000 | 256 | 221 | 111 | 113 | 19 | **337** |
+| decode | 100 | 1280 | **2022** | 907 | 872 | 263 | 617 |
+| decode | 1000 | 1280 | **1448** | 830 | 848 | 222 | 545 |
+| decode | 10000 | 1280 | **705** | 472 | 495 | 113 | 369 |
+| decode | 50000 | 256 | **215** | 107 | 117 | 13 | 75 |
 
 The cberner figures come from an earlier run with its own benchmark (`rqoracle bench`).
-Reproduce everything with `make bench-compare CPU=<a performance core>`.
+Reproduce everything with `make bench-compare CPU=<a performance core>`; it
+leaves out raptorgo's SIMD build, which does not compile with Go 1.27
+(see `interop/raptorgo_simd_test.go`).
 
 With `WithConcurrency(n)`, a large block is processed in parallel byte
 stripes, which adds 40–75% for encode with 4 goroutines at T=1280.
@@ -117,7 +127,7 @@ stripes, which adds 40–75% for encode with 4 goroutines at T=1280.
 | `internal/rfc` | Table 2, Rand, Deg, Tuple, row patterns. `tables_gen.go` is generated by `gentables` from the RFC text |
 | `internal/solver` | Symbolic inactivation decoding, the plan, and the §5.8 statistics test |
 | `internal/refsolve` | Dense reference implementation (test oracle only) |
-| `interop/` | Separate module: xssnick differential tests, live cberner tests, comparison benchmarks |
+| `interop/` | Separate module: differential tests against xssnick, takeyourhatoff and raptorgo, live cberner tests, comparison benchmarks |
 | `tools/rqoracle` | Rust oracle built on cberner/raptorq 2.0.1: golden vectors, encode/decode for interop, benchmarks. Builds with Cargo or, without a Rust toolchain, with its Dockerfile |
 
 Useful make targets: `make test`, `test-purego`, `test-race`, `test-cross`

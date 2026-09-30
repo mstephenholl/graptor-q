@@ -1,12 +1,7 @@
-// Package interop cross-checks graptorq against other RaptorQ
-// implementations: github.com/xssnick/raptorq (Go) and, when the RQORACLE
-// environment variable names a built tools/rqoracle binary, cberner/raptorq
-// (Rust).
 package interop
 
 import (
 	"bytes"
-	"fmt"
 	"math/rand/v2"
 	"testing"
 
@@ -27,49 +22,26 @@ import (
 // TestCbernerAllKPrime).
 func xssnickP1Bug(p *rfc.Params) bool { return p.P1 == p.P }
 
-// For every K' of RFC 6330 Table 2, encoding the same block with xssnick and
-// graptorq must give identical source and repair symbols, except for the
-// repair symbols of the K' affected by xssnick's P1 deviation, which must
-// differ. Every other case uses the smallest K mapping to K' (so K != K' and
-// the ESI-to-ISI offset is exercised), and the block length leaves a partial
-// last symbol.
+// For every K' of RFC 6330 Table 2 (see encoderCases), encoding the same
+// block with xssnick and graptorq must give identical source and repair
+// symbols, except for the repair symbols of the K' affected by xssnick's P1
+// deviation, which must differ.
 func TestXssnickEncoderDiff(t *testing.T) {
-	sizes := []int{1, 3, 7, 13, 20, 1281}
-	all := rfc.All()
-	rng := rand.New(rand.NewPCG(21, 22))
-	for i := range all {
-		p := &all[i]
-		if testing.Short() && i%10 != 0 {
-			continue
-		}
-		K := p.KPrime
-		if i%2 == 1 {
-			K = all[i-1].KPrime + 1
-		}
-		T := sizes[i%len(sizes)]
-		if K > 5000 && T > 20 {
-			T = 20
-		}
-		data := testutil.PatternData(K*T-T/2, uint64(i))
-
-		xe, err := xraptorq.NewRaptorQ(uint32(T)).CreateEncoder(data)
+	encoderCases(t, 21, func(c encoderCase) {
+		xe, err := xraptorq.NewRaptorQ(uint32(c.T)).CreateEncoder(c.data)
 		if err != nil {
 			t.Fatal(err)
 		}
-		ge, err := graptorq.NewBlockEncoder(data, T)
+		ge, err := graptorq.NewBlockEncoder(c.data, c.T)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if int(xe.BaseSymbolsNum()) != ge.K() || ge.K() != K {
-			t.Fatalf("K'=%d: K mismatch: xssnick %d, graptorq %d, want %d", p.KPrime, xe.BaseSymbolsNum(), ge.K(), K)
+		if int(xe.BaseSymbolsNum()) != ge.K() || ge.K() != c.K {
+			t.Fatalf("K'=%d: K mismatch: xssnick %d, graptorq %d, want %d", c.p.KPrime, xe.BaseSymbolsNum(), ge.K(), c.K)
 		}
-		esis := []uint32{0, uint32(K - 1), uint32(K), uint32(K + 1), uint32(K + 100), graptorq.MaxESI}
-		for range 4 {
-			esis = append(esis, uint32(rng.IntN(graptorq.MaxESI+1)))
-		}
-		deviant := xssnickP1Bug(p)
+		deviant := xssnickP1Bug(c.p)
 		repairDiffers := false
-		for _, esi := range esis {
+		for _, esi := range c.esis {
 			want := xe.GenSymbol(esi)
 			got, err := ge.AppendSymbol(nil, esi)
 			if err != nil {
@@ -77,16 +49,16 @@ func TestXssnickEncoderDiff(t *testing.T) {
 			}
 			switch {
 			case bytes.Equal(got, want):
-			case deviant && int(esi) >= K:
+			case deviant && int(esi) >= c.K:
 				repairDiffers = true
 			default:
-				t.Fatalf("K'=%d K=%d T=%d ESI=%d: graptorq %x, xssnick %x", p.KPrime, K, T, esi, got, want)
+				t.Fatalf("K'=%d K=%d T=%d ESI=%d: graptorq %x, xssnick %x", c.p.KPrime, c.K, c.T, esi, got, want)
 			}
 		}
 		if deviant && !repairDiffers {
-			t.Errorf("K'=%d: xssnick no longer shows its P1 deviation; revisit xssnickP1Bug", p.KPrime)
+			t.Errorf("K'=%d: xssnick no longer shows its P1 deviation; revisit xssnickP1Bug", c.p.KPrime)
 		}
-	}
+	})
 }
 
 // Symbols from one implementation must decode with the other, in both
@@ -160,96 +132,5 @@ func TestXssnickCrossDecode(t *testing.T) {
 				t.Fatalf("trial %d: xssnick could not decode graptorq symbols (K=%d)", trial, K)
 			}
 		}
-	}
-}
-
-func BenchmarkCmp(b *testing.B) {
-	for _, c := range []struct{ K, T int }{{100, 1280}, {1000, 1280}, {10000, 1280}, {50000, 256}} {
-		data := testutil.PatternData(c.K*c.T, 1)
-		name := fmt.Sprintf("K=%d/T=%d", c.K, c.T)
-
-		for _, v := range []struct {
-			lib string
-			n   int
-		}{{"graptorq", 1}, {"graptorq-par4", 4}} {
-			b.Run("lib="+v.lib+"/op=encode/"+name, func(b *testing.B) {
-				b.SetBytes(int64(len(data)))
-				for b.Loop() {
-					e, _ := graptorq.NewBlockEncoder(data, c.T, graptorq.WithConcurrency(v.n))
-					if _, err := e.AppendSymbol(nil, uint32(c.K)); err != nil {
-						b.Fatal(err)
-					}
-				}
-			})
-		}
-		b.Run("lib=xssnick/op=encode/"+name, func(b *testing.B) {
-			b.SetBytes(int64(len(data)))
-			for b.Loop() {
-				e, _ := xraptorq.NewRaptorQ(uint32(c.T)).CreateEncoder(data)
-				e.GenSymbol(uint32(c.K))
-			}
-		})
-
-		// Decode with 10% of the source symbols lost and replaced by repair
-		// symbols, plus two extra. Both libraries deliver the decoded block
-		// into a reused buffer (AppendSource, DecodeInto).
-		ge, _ := graptorq.NewBlockEncoder(data, c.T)
-		type sym struct {
-			esi  uint32
-			data []byte
-		}
-		var syms []sym
-		lost := 0
-		for esi := range uint32(c.K) {
-			if esi%10 == 3 {
-				lost++
-				continue
-			}
-			s, _ := ge.AppendSymbol(nil, esi)
-			syms = append(syms, sym{esi, s})
-		}
-		for i := range lost + 2 {
-			esi := uint32(c.K + i)
-			s, _ := ge.AppendSymbol(nil, esi)
-			syms = append(syms, sym{esi, s})
-		}
-		for _, v := range []struct {
-			lib string
-			n   int
-		}{{"graptorq", 1}, {"graptorq-par4", 4}} {
-			b.Run("lib="+v.lib+"/op=decode/"+name, func(b *testing.B) {
-				b.SetBytes(int64(len(data)))
-				d, _ := graptorq.NewBlockDecoder(len(data), c.T, graptorq.WithConcurrency(v.n))
-				out := make([]byte, 0, len(data))
-				for b.Loop() {
-					d.Reset()
-					for _, s := range syms {
-						if _, err := d.AddSymbol(s.esi, s.data); err != nil {
-							b.Fatal(err)
-						}
-					}
-					if err := d.Decode(); err != nil {
-						b.Fatal(err)
-					}
-					out, _ = d.AppendSource(out[:0])
-				}
-			})
-		}
-		b.Run("lib=xssnick/op=decode/"+name, func(b *testing.B) {
-			b.SetBytes(int64(len(data)))
-			d, _ := xraptorq.NewRaptorQ(uint32(c.T)).CreateDecoder(uint32(len(data)))
-			out := make([]byte, len(data))
-			for b.Loop() {
-				d.Reset()
-				for _, s := range syms {
-					if _, err := d.AddSymbol(s.esi, s.data); err != nil {
-						b.Fatal(err)
-					}
-				}
-				if ok, err := d.DecodeInto(out); !ok || err != nil {
-					b.Fatal("xssnick decode failed", err)
-				}
-			}
-		})
 	}
 }

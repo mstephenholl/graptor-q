@@ -86,12 +86,18 @@ interop: $(ORACLE_TARGET)
 bench:
 	go test -run xxx -bench . ./internal/gf256/ ./internal/solver/
 
-# Single-core comparison with xssnick (Go) and cberner (Rust) on CPU $(CPU),
-# as reported in the README (median of the 5 runs of each benchmark). For
-# cberner, prefer the native build: the Docker one uses musl's allocator.
+# Single-core comparison with the Go libraries of interop/ and cberner (Rust)
+# on CPU $(CPU), as reported in the README (median of the 5 runs of each
+# benchmark). The Go benchmarks run twice: with the default build, and with
+# GOEXPERIMENT=simd GOAMD64=v3 (for every library), which enables the SIMD
+# kernels of takeyourhatoff/raptorq; raptorgo's need Go 1.26 and are left out
+# (see interop/raptorgo_simd_test.go). For cberner, prefer the native build:
+# the Docker one uses musl's allocator.
 CPU ?= 0
+CMP_BENCH := 'Cmp/^lib=(graptorq|graptorq-cold|xssnick|takeyourhatoff|takeyourhatoff-cold|raptorgo)$$/'
 bench-compare: $(ORACLE_TARGET)
-	cd interop && taskset -c $(CPU) go test -cpu 1 -run xxx -bench 'Cmp/lib=(graptorq|xssnick)/' -benchtime 1s -count 5 .
+	cd interop && taskset -c $(CPU) go test -cpu 1 -run xxx -bench $(CMP_BENCH) -benchtime 1s -count 5 .
+	cd interop && GOEXPERIMENT=simd GOAMD64=v3 taskset -c $(CPU) go test -cpu 1 -run xxx -bench $(CMP_BENCH) -benchtime 1s -count 5 .
 	taskset -c $(CPU) $(RQORACLE) bench
 
 # RFC 6330 Section 5.8 recovery properties with 1.4 million trials.

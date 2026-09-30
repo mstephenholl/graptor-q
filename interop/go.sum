@@ -1,2 +1,6 @@
+github.com/fgn/raptorgo v0.1.1 h1:V/3NZ5Ip/oC7quuhmk8nsK1HE+Fv3x8s0yx0aPlNYms=
+github.com/fgn/raptorgo v0.1.1/go.mod h1:huBkY3qGpCP6mJyw2zLN2SohPIi15+4EcgfCS5mhK6E=
+github.com/takeyourhatoff/raptorq v0.0.0-20260715173533-0da594558018 h1:HPxXFFYds59uoLJzavTJGj6z0SL5MZnatMrEyc/TUB8=
+github.com/takeyourhatoff/raptorq v0.0.0-20260715173533-0da594558018/go.mod h1:xVbGZVaxCRElLq6q3VoVwEoUnGVT5QQy5iNX5vQ2Tug=
 github.com/xssnick/raptorq v1.5.2 h1:gG3flWzR53KYf1FTyH3Mr58zV40KkoQ/5oHifT4LZAI=
 github.com/xssnick/raptorq v1.5.2/go.mod h1:mo5n6T4yaqZkNVMWonRuMS0tcyD4XQ6PwwTjaY3ZwQY=

@@ -33,6 +33,7 @@ Decoding K = 10,000, T = 1280 with 10% loss (about 18.7 ms) breaks down as:
 - **Prefetching for small symbols in large blocks.** A head-only prefetch of the next instruction's operands measured −12% at K = 50,000, T = 256. It had no effect at T = 1280 and cost 15% on cache-resident plans, so it needs a heuristic on T and the working-set size.
 - **Zero-copy symbol ingestion.** An opt-in API where the caller hands over ownership of symbol buffers would remove one of the two copies, about 6% of decode.
 - **Wider fused kernels.** A multi-source multiply-add for the HDPC phase-2 operations, and an AVX-512 tier on CPUs that have it.
+- **Faster plan construction.** Without the plan cache, encoding K = 50,000, T = 256 runs at 221 MB/s against cberner's 337 MB/s, and every decode builds a plan (about 21% of decode time at K = 10,000). Profile `BenchmarkPlan` at K' = 56,403 and compare with cberner's solver.
 - **Parallel plan construction.** Relevant for multi-core decoders of large blocks, where plan construction is serial but execution already runs in parallel stripes.
 - **Native arm64 profiling.** NEON correctness is verified under qemu, but its performance has never been measured.
 
