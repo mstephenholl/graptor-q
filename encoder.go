@@ -217,6 +217,17 @@ func (e *Encoder) AppendSymbol(dst []byte, id PayloadID) ([]byte, error) {
 	return b.AppendSymbol(dst, id.ESI)
 }
 
+// AppendSymbols appends the n consecutive encoding symbols of source block
+// id.SBN starting at ESI id.ESI; with id's Payload ID in front they form a
+// packet carrying several symbols (RFC 6330 Section 4.4.2).
+func (e *Encoder) AppendSymbols(dst []byte, id PayloadID, n int) ([]byte, error) {
+	b, err := e.Block(id.SBN)
+	if err != nil {
+		return dst, err
+	}
+	return b.AppendSymbols(dst, id.ESI, n)
+}
+
 // AppendPacket appends an encoding packet (RFC 6330 Section 4.4.2): the FEC
 // Payload ID followed by the encoding symbol.
 func (e *Encoder) AppendPacket(dst []byte, id PayloadID) ([]byte, error) {

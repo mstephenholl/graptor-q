@@ -69,6 +69,5 @@ by memory bandwidth. EVEX-encoded GFNI on 512-bit registers comes for free.
 
 ## Other known gaps
 
-- **API:** `BlockEncoder.AppendRepair`, and a `WithMaxOverhead` limit on stored repair symbols.
 - **CI:** the workflows in `.github/workflows` have not run yet. That includes the native arm64 job and the nightly statistics and fuzzing jobs.
 - **Project:** choose a license; review the RFC 6330 IPR disclosures; report the xssnick P1 deviation upstream (see the README).

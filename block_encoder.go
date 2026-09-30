@@ -128,6 +128,53 @@ func (e *BlockEncoder) AppendSymbol(dst []byte, esi uint32) ([]byte, error) {
 	return e.appendISI(dst, esi+uint32(e.p.KPrime-e.k))
 }
 
+// AppendSymbols appends the n consecutive encoding symbols with ESIs
+// firstESI, ..., firstESI+n-1 (n*T bytes) to dst, source and repair symbols
+// alike: the payload of a packet that carries several symbols (RFC 6330
+// Section 4.4.2). On error dst is returned unchanged.
+func (e *BlockEncoder) AppendSymbols(dst []byte, firstESI uint32, n int) ([]byte, error) {
+	if n < 0 {
+		return dst, &ParamError{"symbol count", 0, "must not be negative"}
+	}
+	if n == 0 {
+		return dst, nil
+	}
+	last := uint64(firstESI) + uint64(n) - 1
+	if last > MaxESI {
+		return dst, ErrESIRange
+	}
+	if last >= uint64(e.k) {
+		if err := e.Prepare(); err != nil {
+			return dst, err
+		}
+	}
+	start := len(dst)
+	dst = grow(dst, n*e.t)
+	shift := uint32(e.p.KPrime - e.k)
+	var cols [48]uint16 // at most d + d1 = 30 + 3 columns
+	for i := range n {
+		esi := firstESI + uint32(i)
+		out := dst[start+i*e.t : start+(i+1)*e.t]
+		if int(esi) < e.k {
+			copy(out, e.source(int(esi)))
+		} else {
+			solver.EncodeSymbol(e.p, e.work, e.t, esi+shift, out, cols[:0])
+		}
+	}
+	return dst, nil
+}
+
+// AppendRepair appends n repair symbols to dst, starting with repair symbol
+// number first: the symbols with ESIs K+first, ..., K+first+n-1. Sending more
+// repair for a block is AppendRepair(buf, sent, n) without ESI arithmetic.
+func (e *BlockEncoder) AppendRepair(dst []byte, first uint32, n int) ([]byte, error) {
+	esi := uint64(e.k) + uint64(first)
+	if esi > MaxESI {
+		return dst, ErrESIRange
+	}
+	return e.AppendSymbols(dst, uint32(esi), n)
+}
+
 // appendISI appends Enc[K', C, Tuple[K', isi]] for any 32-bit internal
 // symbol ID (tests use it for vectors beyond the 24-bit ESI range).
 func (e *BlockEncoder) appendISI(dst []byte, isi uint32) ([]byte, error) {

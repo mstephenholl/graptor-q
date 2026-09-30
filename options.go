@@ -11,10 +11,11 @@ type options struct {
 	noPlanCache bool
 	maxMemory   int64
 	blockCache  int // 0: default, > 0: limit, < 0: unlimited
+	maxOverhead int // symbols beyond K stored per source block, < 0: unlimited
 }
 
 func buildOptions(opts []Option) options {
-	o := options{concurrency: runtime.GOMAXPROCS(0)}
+	o := options{concurrency: runtime.GOMAXPROCS(0), maxOverhead: -1}
 	for _, f := range opts {
 		f(&o)
 	}
@@ -55,6 +56,20 @@ func WithBlockCache(n int) Option {
 			o.blockCache = -1
 		}
 	}
+}
+
+// WithMaxOverhead makes decoders store at most K+n distinct symbols per
+// source block (of K source symbols); further symbols are ignored, like
+// duplicates. This bounds the memory of each block, notably with deferred
+// decoding, where symbols are only stored until Decode.
+//
+// If the first K+n symbols of a block happen not to determine it, the block
+// cannot be decoded until Reset. With symbols chosen at random that happens
+// with probability about 1e-2 for n = 0, 1e-4 for n = 1 and below 1e-6 for
+// n >= 2 (RFC 6330 Section 5.8), so n >= 2 is recommended. A negative n means
+// no limit, the default.
+func WithMaxOverhead(n int) Option {
+	return func(o *options) { o.maxOverhead = n }
 }
 
 // WithMaxMemory limits the working memory of a single source block (roughly

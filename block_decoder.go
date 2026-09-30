@@ -131,6 +131,9 @@ func (d *BlockDecoder) AddSymbol(esi uint32, sym []byte) (added bool, err error)
 	if d.decoded {
 		return false, nil
 	}
+	if n := d.o.maxOverhead; n >= 0 && d.Received() >= d.k+n {
+		return false, nil
+	}
 	if m := d.o.maxMemory; m > 0 && int64(d.p.L+1+len(d.arena)/d.t+1)*int64(d.t) > m {
 		return false, ErrMemoryLimit
 	}
