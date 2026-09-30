@@ -1,0 +1,60 @@
+# Roadmap
+
+## Investigate further performance gains
+
+**Status:** open. The initial target of 1.5–1.6× xssnick/raptorq on single-core
+decode was met on 2026-09-30 (commit `125f26c`). Ratios by block size:
+
+| K | T | Decode vs xssnick |
+|---|---|---|
+| 100 | 1280 | 2.25× |
+| 1,000 | 1280 | 1.73× |
+| 10,000 | 1280 | 1.48× |
+| 50,000 | 256 | 2.00× |
+
+Encode is 2.1–4.8×. The case that remains weakest is decoding mid-size blocks
+with large symbols (K = 10,000, T = 1280). Run-to-run variation there is about ±3%.
+
+### Where the time goes
+
+Decoding K = 10,000, T = 1280 with 10% loss (about 18.7 ms) breaks down as:
+
+| Share | Work |
+|---|---|
+| ~56% | Plan execution: fused XOR passes N1 and N4 over a working set of about 12.8 MB. This is memory-bandwidth-bound at about 15–20 GB/s effective, and the kernels themselves reach 70–100 GB/s on cache-resident data. |
+| ~21% | Plan construction: about 400 ns per row, spread over phase 1, U-part bitsets, HDPC row reduction, assembly and row generation. |
+| ~12% | The two copies the API requires: `AddSymbol` into the decoder and `AppendSource` out of it. xssnick makes the same two copies. |
+| rest | Decoder bookkeeping and rebuilding the missing symbols. |
+
+### Ideas not yet tried
+
+- **Execution locality.** Reorder independent instructions, or relabel slots in execution order, so that operands are reused while they are still cached. Measure against the current order with `BenchmarkDecodePaths` and the decode-plan benchmarks.
+- **Prune N1 when the HDPC rows are unused.** With enough extra repair symbols (more than about H), phase 2 needs no HDPC rows. Only the reduced right-hand sides reachable from the used binary rows are then needed, instead of all of them.
+- **Prefetching for small symbols in large blocks.** A head-only prefetch of the next instruction's operands measured −12% at K = 50,000, T = 256. It had no effect at T = 1280 and cost 15% on cache-resident plans, so it needs a heuristic on T and the working-set size.
+- **Zero-copy symbol ingestion.** An opt-in API where the caller hands over ownership of symbol buffers would remove one of the two copies, about 6% of decode.
+- **Wider fused kernels.** A multi-source multiply-add for the HDPC phase-2 operations, and an AVX-512 tier on CPUs that have it.
+- **Parallel plan construction.** Relevant for multi-core decoders of large blocks, where plan construction is serial but execution already runs in parallel stripes.
+- **Native arm64 profiling.** NEON correctness is verified under qemu, but its performance has never been measured.
+
+### Already measured and rejected
+
+- **Cache-blocked execution.** Replaying the plan over byte stripes was slower at every stripe width, for working sets from 1 MB to 64 MB (see `Plan.ExecuteRange`).
+- **Software prefetching at T = 1280.** Whole-operand prefetch cost 13–20%; head-only prefetch was within ±1%.
+- **Huge pages (`MADV_HUGEPAGE`).** No change at K = 10,000 and 2–3% at K = 50,000.
+
+### How to measure
+
+- `make bench-compare CPU=<P-core>`: single-core comparison with xssnick and cberner.
+- `BenchmarkDecodePaths`: the low-loss path against the full solver.
+- `BenchmarkDecodePlan` in `internal/solver`: plan construction alone.
+
+Pin to one performance core. On hybrid CPUs, hyperthread siblings make results noisy.
+
+## Other known gaps
+
+- **Streaming large objects:** `Encoder` from an `io.ReaderAt` and `Decoder` to an `io.WriterAt`, for objects larger than memory.
+- **API:** `BlockEncoder.AppendRepair`, and a `WithMaxOverhead` limit on stored repair symbols.
+- **CI:** the workflows in `.github/workflows` have not run yet. That includes the native arm64 job and the nightly statistics and fuzzing jobs.
+- **Kernel tiers:** SSSE3 for older x86 CPUs without AVX2, and AVX-512.
+- **Tooling:** a Dockerfile for `tools/rqoracle`, so interop tests do not need a local Rust toolchain.
+- **Project:** choose a license; review the RFC 6330 IPR disclosures; report the xssnick P1 deviation upstream (see the README).

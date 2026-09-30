@@ -117,6 +117,11 @@ Useful make targets: `make test`, `test-purego`, `test-race`, `test-cross`
 (arm64, s390x, 386), `interop`, `oracle-vectors`, `bench-compare`, `stat-long`,
 and `fuzz`.
 
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md) for planned work, including further
+performance investigation.
+
 ## Notes
 
 - RFC 6330 has intellectual property disclosures on file with the IETF,
