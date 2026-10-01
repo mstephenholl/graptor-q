@@ -24,8 +24,9 @@ toolchain, or in Docker when given `ORACLE=docker` (for example
 
 ## Pull requests
 
-`main` accepts changes only through squash-merged pull requests whose
-required checks pass (`.github/rulesets/main.json`):
+Once the rulesets are applied (step 4 of "Going public"), `main` accepts
+changes only through squash-merged pull requests whose required checks pass
+(`.github/rulesets/main.json`):
 
 - `ci`: every job of `ci.yml` passed.
 - `release-plan`: the release labels are valid and high enough for the
@@ -76,6 +77,9 @@ test binaries, built with `-trimpath`, are byte-identical, nothing is
 measured: a change to documentation, workflows or `interop/` moves no
 compiled code.
 
+A pull request runs its own copy of the workflows and of `internal/cmd`, so
+it can weaken its own checks. Review changes there before merging.
+
 To accept a regression, add the label `perf:accept` (it counts only when the
 repository owner adds it) and re-run the failed jobs of the run. Only the
 `perf` job runs again, on the measurements already taken.
@@ -90,11 +94,14 @@ once:
 | base / head | what it measures | result |
 |---|---|---|
 | `main` / `main`, 3 dispatches | noise of identical builds | TODO |
-| `89a9be9^` / `89a9be9` | a neutral change that moves code | TODO |
-| `2882e7c` / `2882e7c^` | a 6–16% slowdown of encode-cold | TODO |
+| `89a9be9^` / `89a9be9` | a neutral change: a test added to the root package, which moves root-package code only | TODO |
+| `2882e7c` / `2882e7c^` | a known slowdown: reverting the `NewPlan` scratch pool, measured locally at +17.1% (encode-cold, K=100) and +10.8% (K=1000) | TODO |
 
+Dispatch each pair with `gh workflow run perf-calibrate -f base=<base> -f head=<head>`.
 The threshold is the smallest at which none of the neutral runs fails, plus
-one percent, provided the known slowdown is still flagged. Repeat the
+one percent, provided the known slowdown is still flagged. If that takes
+more than 10%, raise `-rounds` before requiring the check: a weaker gate
+would miss the known slowdown at K=1000. Repeat the
 calibration when the suite changes or the check raises a false alarm.
 
 A slowdown smaller than the threshold passes, and several of them add up.
@@ -104,10 +111,17 @@ Compare an older release with `main` from time to time with
 ## Going public
 
 Rulesets need a public repository on GitHub Free, and the `release` job
-does nothing while the repository is private. The steps, in order:
+does nothing while the repository is private.
 
-1. While the repository is still private, merge the pull request that
-   removes "private" from `README.md` and `ROADMAP.md`. pkg.go.dev keeps
+Before you start, decide on a license. Without one, pkg.go.dev shows no
+documentation for any version, and nobody else has the right to use the
+code. Every commit's author email also becomes public.
+
+The steps, in order:
+
+1. While the repository is still private, and after the pull request that
+   adds this section, merge the pull request that removes "private" from
+   `README.md` and `ROADMAP.md`. pkg.go.dev keeps
    the README of every version, and no version is released before step 2.
 2. Make the repository public:
    `gh repo edit mstephenholl/graptor-q --visibility public --accept-visibility-change-consequences`
@@ -116,7 +130,9 @@ does nothing while the repository is private. The steps, in order:
    `gh api -X PUT repos/mstephenholl/graptor-q/actions/permissions/fork-pr-contributor-approval -f approval_policy=all_external_contributors`
 4. Create the labels and the rulesets: `.github/rulesets/apply.sh`. It
    prints the rulesets GitHub stored, and fails unless you can always
-   bypass each of them.
+   bypass each of them. If GitHub rejects the `User` bypass entry, delete
+   it from both JSON files and run the script again: the Admin role entry
+   remains.
 5. Release v0.1.0: `gh workflow run ci --ref main`, or merge a pull
    request. Re-running an older run of `main` releases nothing, because a
    re-run reuses its event, which says the repository is private.
