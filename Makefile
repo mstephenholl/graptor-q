@@ -36,10 +36,12 @@ TIERS ?= generic ssse3 avx2 gfni
 test-tiers:
 	for t in $(TIERS); do echo "== tier $$t"; GRAPTORQ_GF256=$$t go test -short ./... || exit 1; done
 
-# arm64 (NEON kernels) and s390x (big-endian) under qemu-user, plus 32-bit x86.
+# arm64 (NEON kernels), s390x (big-endian) and riscv64 (portable kernels)
+# under qemu-user, plus 32-bit x86.
 test-cross:
 	GOARCH=arm64 go test -short -exec qemu-aarch64-static ./...
 	GOARCH=s390x go test -short -exec qemu-s390x-static ./...
+	GOARCH=riscv64 go test -short -exec qemu-riscv64-static ./...
 	GOARCH=386 go test -short ./...
 
 vet: vet-lib vet-interop

@@ -27,7 +27,7 @@ graptor-q implements all of RFC 6330:
 | **fgn/raptorgo v0.1.1 differential** (`interop/`), an independent implementation with the object layer | Identical §4.3 derivations for 52,608 inputs. Byte-identical packets, single and grouped, source and repair, with and without the padding at the end of source symbols, for 20 objects with Z up to 5, N up to 13 and Al from 1 to 8. Cross-decoding of whole objects in both directions, with and without that padding |
 | §5.8 recovery properties, with ESIs uniform over 0..2²⁴−1 (`make stat-long`) | Failures at K' symbols: 491/10⁵ = 0.49% (bound 1%). At K'+1: 4/(3×10⁵) = 1.3×10⁻⁵ (bound 10⁻⁴). At K'+2: 0/10⁶ (bound 10⁻⁶) |
 | Fuzzing: OTI parsing, garbage packets, block round trips | Robustness on untrusted input |
-| Platforms: amd64, `purego`, arm64 (natively in CI and under qemu), s390x (big-endian, qemu), 386 | Portability |
+| Platforms: amd64, `purego`, arm64 (natively in CI and under qemu), s390x (big-endian, qemu), riscv64 (qemu), 386 | Portability |
 
 ## Finding: xssnick/raptorq deviates from RFC 6330 at 99 of the 477 K'
 

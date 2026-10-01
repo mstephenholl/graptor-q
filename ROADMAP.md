@@ -69,6 +69,25 @@ by memory bandwidth. EVEX-encoded GFNI on 512-bit registers comes for free.
 - **CI validation on GitHub-hosted runners**, which usually have AVX-512. Add a job that runs `make test-tiers` including the new tier; `TestEnvTier` reports it as skipped when the runner's CPU lacks it. Optionally also run the SDE job in CI, so coverage does not depend on the runner's CPU.
 - **Hardware:** an AVX-512-capable development machine would allow native testing and benchmarking. Examples are AMD Zen 4/Zen 5 laptops and workstations, or cloud Xeon/EPYC instances.
 
+## RVV kernel tier
+
+**Status:** idea, not started. The portable Go kernels already run on
+riscv64, and `make test-cross` runs the short test suite there under QEMU. No
+RISC-V hardware is available to measure a vector tier, and GitHub has no
+hosted RISC-V runners.
+
+**Expected benefit:** unknown until measured. RVV 1.0 has `vrgather.vv`,
+which can do the nibble-table lookups that `PSHUFB` and `TBL` do in the
+existing tiers, and `vsetvli` lets one kernel serve every vector length. The
+speed of `vrgather` differs between implementations, so the tier must beat
+the portable kernels on real hardware before it is kept.
+
+**Plan:**
+- **Kernels:** RVV variants of xor, mul, mulAdd and the fused XOR/gather, as a new tier in `internal/gf256`. Go 1.25 and later assemble RVV. Go 1.24, the module's minimum, rejects `VSETVLI`, so the files need a `go1.25` build constraint until the minimum moves.
+- **Selection:** at build time with the `riscv64.rva23u64` build tag (`GORISCV64=rva23u64`; RVA23 requires the V extension), or at run time through the `riscv_hwprobe` system call, since the module does not use `x/sys/cpu`. The default, `GORISCV64=rva20u64`, has no vector extension.
+- **Validation:** QEMU emulates RVV 1.0, and its default CPU model includes it; `-cpu rv64,v=true,vlen=256` sets another vector length. `make test-cross` can then test the tier forced with `GRAPTORQ_GF256`.
+- **Hardware:** an RVV 1.0 board for benchmarking. Keep the tier only where it beats the portable kernels.
+
 ## Other known gaps
 
 - **CI:** the main workflow runs on every push to main and on every pull request in the private repository github.com/mstephenholl/graptor-q, including the native arm64 job. The weekly statistics and fuzzing workflow has not run yet; it can be started by hand.
