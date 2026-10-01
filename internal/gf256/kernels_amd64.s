@@ -8,6 +8,11 @@
 // Only VEX-encoded instructions touch vector registers: a legacy SSE
 // instruction (such as MOVQ r64, xmm) executed while the upper YMM halves are
 // dirty costs hundreds of cycles on some Intel cores.
+//
+// Every loop starts with PCALIGN $64. Go aligns functions to only 32
+// bytes, so a change anywhere in the binary can move a loop within its
+// cache line, which changed kernel timings by up to 26% on GitHub's
+// runners. TestLoopsAligned checks it.
 
 // func xorAVX2(dst, src []byte)
 TEXT ·xorAVX2(SB), NOSPLIT, $0-48
@@ -16,6 +21,7 @@ TEXT ·xorAVX2(SB), NOSPLIT, $0-48
 	MOVQ src_len+32(FP), CX
 	SHRQ $5, CX
 
+	PCALIGN $64
 loop128:
 	CMPQ CX, $4
 	JB   loop32
@@ -36,6 +42,7 @@ loop128:
 	SUBQ    $4, CX
 	JMP     loop128
 
+	PCALIGN $64
 loop32:
 	TESTQ   CX, CX
 	JZ      done
@@ -67,6 +74,7 @@ TEXT ·mulAVX2(SB), NOSPLIT, $0-56
 	MOVQ           src_len+32(FP), CX
 	SHRQ           $5, CX
 
+	PCALIGN $64
 mul64:
 	CMPQ    CX, $2
 	JB      mul32
@@ -120,6 +128,7 @@ TEXT ·mulAddAVX2(SB), NOSPLIT, $0-56
 	MOVQ           src_len+32(FP), CX
 	SHRQ           $5, CX
 
+	PCALIGN $64
 madd64:
 	CMPQ    CX, $2
 	JB      madd32
@@ -177,6 +186,7 @@ TEXT ·mulGFNI(SB), NOSPLIT, $0-56
 	MOVQ         src_len+32(FP), CX
 	SHRQ         $5, CX
 
+	PCALIGN $64
 gmul64:
 	CMPQ           CX, $2
 	JB             gmul32
@@ -212,6 +222,7 @@ TEXT ·mulAddGFNI(SB), NOSPLIT, $0-56
 	MOVQ         src_len+32(FP), CX
 	SHRQ         $5, CX
 
+	PCALIGN $64
 gmadd128:
 	CMPQ           CX, $4
 	JB             gmadd32
@@ -236,6 +247,7 @@ gmadd128:
 	SUBQ           $4, CX
 	JMP            gmadd128
 
+	PCALIGN $64
 gmadd32:
 	TESTQ          CX, CX
 	JZ             gmadddone
@@ -265,6 +277,7 @@ TEXT ·xorNAVX2(SB), NOSPLIT, $0-33
 	MOVBLZX acc+32(FP), R10
 	XORQ    AX, AX
 
+	PCALIGN $64
 xn64:
 	LEAQ    64(AX), DX
 	CMPQ    DX, CX
@@ -282,6 +295,7 @@ xn64first:
 	VMOVDQU 32(SI)(AX*1), Y1
 	MOVQ    $1, BX
 
+	PCALIGN $64
 xn64src:
 	CMPQ  BX, R9
 	JAE   xn64store
@@ -311,6 +325,7 @@ xn32first:
 	VMOVDQU (SI)(AX*1), Y0
 	MOVQ    $1, BX
 
+	PCALIGN $64
 xn32src:
 	CMPQ  BX, R9
 	JAE   xn32store
@@ -344,6 +359,7 @@ TEXT ·hdpcStepAVX2(SB), NOSPLIT, $0-40
 	VPXOR        Y6, Y6, Y6
 	XORQ         BX, BX
 
+	PCALIGN $64
 hdloop:
 	VMOVDQU  (DI)(BX*1), Y0
 	VPCMPGTB Y0, Y6, Y1
@@ -394,6 +410,7 @@ TEXT ·hdpcStepBitsAVX2(SB), NOSPLIT, $0-40
 	VMOVDQU      bitMask<>(SB), Y4
 	XORQ         BX, BX
 
+	PCALIGN $64
 hdbloop:
 	VPBROADCASTD (SI), Y1
 	VPSHUFB      Y5, Y1, Y1
@@ -437,6 +454,7 @@ TEXT ·xorSSE2(SB), NOSPLIT, $0-48
 	MOVQ src_len+32(FP), CX
 	SHRQ $4, CX
 
+	PCALIGN $64
 sx64:
 	CMPQ  CX, $4
 	JB    sx16
@@ -461,6 +479,7 @@ sx64:
 	SUBQ  $4, CX
 	JMP   sx64
 
+	PCALIGN $64
 sx16:
 	TESTQ CX, CX
 	JZ    sxdone
@@ -489,6 +508,7 @@ TEXT ·mulSSSE3(SB), NOSPLIT, $0-56
 	MOVQ  src_len+32(FP), CX
 	SHRQ  $4, CX
 
+	PCALIGN $64
 smloop:
 	MOVOU  (SI), X0
 	MOVOU  X0, X1
@@ -518,6 +538,7 @@ TEXT ·mulAddSSSE3(SB), NOSPLIT, $0-56
 	MOVQ  src_len+32(FP), CX
 	SHRQ  $4, CX
 
+	PCALIGN $64
 smaloop:
 	MOVOU  (SI), X0
 	MOVOU  X0, X1
@@ -549,6 +570,7 @@ TEXT ·xorNSSE2(SB), NOSPLIT, $0-33
 	MOVBLZX acc+32(FP), R10
 	XORQ    AX, AX
 
+	PCALIGN $64
 sxn32:
 	LEAQ  32(AX), DX
 	CMPQ  DX, CX
@@ -566,6 +588,7 @@ sxn32first:
 	MOVOU 16(SI)(AX*1), X1
 	MOVQ  $1, BX
 
+	PCALIGN $64
 sxn32src:
 	CMPQ  BX, R9
 	JAE   sxn32store
@@ -597,6 +620,7 @@ sxn16first:
 	MOVOU (SI)(AX*1), X0
 	MOVQ  $1, BX
 
+	PCALIGN $64
 sxn16src:
 	CMPQ  BX, R9
 	JAE   sxn16store
@@ -626,6 +650,7 @@ TEXT ·hdpcStepSSE2(SB), NOSPLIT, $0-40
 	MOVOU polyLow<>(SB), X7
 	XORQ  BX, BX
 
+	PCALIGN $64
 shdloop:
 	MOVOU   (DI)(BX*1), X0
 	PXOR    X1, X1
