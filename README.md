@@ -18,7 +18,7 @@ amd64 and arm64.
 go get github.com/mstephenholl/graptor-q
 ```
 
-graptor-q needs Go 1.24 or later. The package name is `graptorq`.
+graptor-q needs Go 1.26 or later. The package name is `graptorq`.
 
 The repository is private. Set `GOPRIVATE=github.com/mstephenholl/*` before
 you run `go get`, so that Go fetches the module from GitHub with your Git

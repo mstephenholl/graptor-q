@@ -24,11 +24,11 @@ jobs:
   test:
     strategy:
       matrix:
-        go: ["1.24", "stable"]
+        go: ["1.26", "stable"]
     runs-on: ubuntu-latest
     env:
       # Test with exactly the matrix Go version: no automatic toolchain
-      # upgrade, so the 1.24 leg checks the module's minimum version.
+      # upgrade, so the 1.26 leg checks the module's minimum version.
       GOTOOLCHAIN: local
     steps:
       - uses: actions/checkout@v7

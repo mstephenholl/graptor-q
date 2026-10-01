@@ -83,7 +83,7 @@ speed of `vrgather` differs between implementations, so the tier must beat
 the portable kernels on real hardware before it is kept.
 
 **Plan:**
-- **Kernels:** RVV variants of xor, mul, mulAdd and the fused XOR/gather, as a new tier in `internal/gf256`. Go 1.25 and later assemble RVV. Go 1.24, the module's minimum, rejects `VSETVLI`, so the files need a `go1.25` build constraint until the minimum moves.
+- **Kernels:** RVV variants of xor, mul, mulAdd and the fused XOR/gather, as a new tier in `internal/gf256`. Go 1.25 and later assemble RVV, so the module's minimum, Go 1.26, needs no build constraint for it.
 - **Selection:** at build time with the `riscv64.rva23u64` build tag (`GORISCV64=rva23u64`; RVA23 requires the V extension), or at run time through the `riscv_hwprobe` system call, since the module does not use `x/sys/cpu`. The default, `GORISCV64=rva20u64`, has no vector extension.
 - **Validation:** QEMU emulates RVV 1.0, and its default CPU model includes it; `-cpu rv64,v=true,vlen=256` sets another vector length. `make test-cross` can then test the tier forced with `GRAPTORQ_GF256`.
 - **Hardware:** an RVV 1.0 board for benchmarking. Keep the tier only where it beats the portable kernels.
