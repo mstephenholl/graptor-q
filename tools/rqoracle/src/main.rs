@@ -1,4 +1,4 @@
-//! rqoracle: an RFC 6330 oracle for graptorq built on cberner/raptorq 2.0.1.
+//! rqoracle: an RFC 6330 oracle for graptor-q built on cberner/raptorq 2.0.1.
 //!
 //! Subcommands:
 //!   gen-vectors                         JSON lines of golden vectors on stdout
@@ -157,7 +157,7 @@ fn gen_vectors() {
     add("z255-n2", 255 * 5 * 16 - 7, 16, 255, 2, 4, false);
     add("n-max", 4_000, 32, 1, 32, 1, false); // one-byte sub-symbols
 
-    // Decode direction: cberner packets that graptorq must decode.
+    // Decode direction: cberner packets that graptor-q must decode.
     add("decode-block", 5_000, 16, 1, 1, 4, true);
     add("decode-z3", 12_345, 32, 3, 1, 4, true);
     add("decode-n3", 7_777, 40, 2, 3, 4, true); // T/Al = 10 -> (4,3,1,2)
@@ -227,8 +227,8 @@ fn decode(oti_hex: &str) {
 ///
 /// SourceBlockEncoder::new reuses encoding plans from a process-wide cache,
 /// so lib=cberner encodes with the plan of the first iteration, like
-/// graptorq's plan cache. lib=cberner-cold generates the plan for every
-/// block, like graptorq's WithoutPlanCache.
+/// graptor-q's plan cache. lib=cberner-cold generates the plan for every
+/// block, like graptor-q's WithoutPlanCache.
 fn bench() {
     for &(k, t) in &[(100usize, 1280u16), (1000, 1280), (10000, 1280), (50000, 256)] {
         let data = pattern(k * t as usize, 1);

@@ -12,7 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mholland/graptorq/internal/testutil"
+	"github.com/mstephenholl/graptor-q/internal/testutil"
 )
 
 // memWriterAt is an in-memory io.WriterAt. Writes fail while failures > 0.

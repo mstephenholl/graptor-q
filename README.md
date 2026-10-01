@@ -1,4 +1,4 @@
-# graptorq
+# graptor-q
 
 A pure Go implementation of RaptorQ, the fountain code of
 [RFC 6330](https://www.rfc-editor.org/rfc/rfc6330). It covers the core codec
@@ -6,6 +6,8 @@ and the object-delivery layer, has no dependencies, and has SIMD kernels for
 amd64 (AVX2, GFNI) and arm64 (NEON).
 
 ```go
+import "github.com/mstephenholl/graptor-q" // package graptorq
+
 oti, _ := graptorq.DeriveOTI(uint64(len(object)), graptorq.Config{PayloadSize: 1024})
 enc, _ := graptorq.NewEncoder(object, oti)
 for id, symbol := range enc.Packets(repairPerBlock) { /* send id + symbol */ }
@@ -81,7 +83,7 @@ for !isPrime(p._P1) { p._P1++ }
 
 RFC 6330 §5.3.3.3 defines P1 as the smallest prime *greater than or equal to* P. The two
 differ exactly when P is prime, the first case being K' = 49. At those sizes
-its repair symbols differ from every RFC-compliant implementation (graptorq and
+its repair symbols differ from every RFC-compliant implementation (graptor-q and
 cberner agree there). Its encoder and decoder share the deviation, so it still
 round-trips with itself, but it does not interoperate at those block sizes.
 `interop/xssnick_test.go` documents this and fails if the behaviour changes.
@@ -91,12 +93,12 @@ round-trips with itself, but it does not interoperate at those block sizes.
 Single core (Intel Core Ultra 7 155U P-core, GOMAXPROCS=1), MB/s of source
 data, median of 5 runs, Go 1.27.1.
 
-- **Encode:** build the encoder for a new block, then generate one repair symbol. The solution procedure depends only on K', and three libraries reuse it across blocks: graptorq through its plan cache (the default), takeyourhatoff through `Encoder.Reset`, and cberner through the process-wide plan cache of `SourceBlockEncoder::new`. The "from scratch" rows solve every block anew (`WithoutPlanCache()` for graptorq, a new `Encoder` for takeyourhatoff, `SourceBlockEncodingPlan::generate` for cberner), as xssnick and raptorgo always do.
+- **Encode:** build the encoder for a new block, then generate one repair symbol. The solution procedure depends only on K', and three libraries reuse it across blocks: graptor-q through its plan cache (the default), takeyourhatoff through `Encoder.Reset`, and cberner through the process-wide plan cache of `SourceBlockEncoder::new`. The "from scratch" rows solve every block anew (`WithoutPlanCache()` for graptor-q, a new `Encoder` for takeyourhatoff, `SourceBlockEncodingPlan::generate` for cberner), as xssnick and raptorgo always do.
 - **Decode:** lose 10% of the source symbols, replace them with that many repair symbols plus two, decode, and deliver the block into a reused buffer. raptorgo cannot reuse a decoder, so its figures include creating one per block.
-- **SIMD builds:** takeyourhatoff and raptorgo are measured with their SIMD kernels (AVX2 on this CPU; takeyourhatoff also has AVX-512 kernels), built with `GOEXPERIMENT=simd GOAMD64=v3`. raptorgo's need Go 1.26 and were measured with Go 1.26.5. Without the experiment they reach 43–153 MB/s (takeyourhatoff) and 7–63 MB/s (raptorgo). graptorq and xssnick do not use the experiment; their figures change by at most 5% under it.
-- **raptorgo** only has an object API, so its figures use an OTI with a single source block. graptorq's object API is within 4% of its block API on the same benchmarks.
+- **SIMD builds:** takeyourhatoff and raptorgo are measured with their SIMD kernels (AVX2 on this CPU; takeyourhatoff also has AVX-512 kernels), built with `GOEXPERIMENT=simd GOAMD64=v3`. raptorgo's need Go 1.26 and were measured with Go 1.26.5. Without the experiment they reach 43–153 MB/s (takeyourhatoff) and 7–63 MB/s (raptorgo). graptor-q and xssnick do not use the experiment; their figures change by at most 5% under it.
+- **raptorgo** only has an object API, so its figures use an OTI with a single source block. graptor-q's object API is within 4% of its block API on the same benchmarks.
 
-| | K | T | graptorq | xssnick v1.5.2 | takeyourhatoff | raptorgo v0.1.1 | cberner 2.0.1 |
+| | K | T | graptor-q | xssnick v1.5.2 | takeyourhatoff | raptorgo v0.1.1 | cberner 2.0.1 |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | encode, plan reused | 100 | 1280 | **2722** | – | 1483 | – | 1137 |
 | encode, plan reused | 1000 | 1280 | **2586** | – | 1398 | – | 1214 |

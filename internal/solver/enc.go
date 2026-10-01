@@ -1,8 +1,8 @@
 package solver
 
 import (
-	"github.com/mholland/graptorq/internal/gf256"
-	"github.com/mholland/graptorq/internal/rfc"
+	"github.com/mstephenholl/graptor-q/internal/gf256"
+	"github.com/mstephenholl/graptor-q/internal/rfc"
 )
 
 // EncodeSymbol writes Enc[K', C, Tuple[K', isi]] (Section 5.3.5.3) to dst,

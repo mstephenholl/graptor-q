@@ -3,7 +3,7 @@ VECTORS := testdata/vectors/cberner-2.0.1/vectors.jsonl.gz
 # The cberner/raptorq oracle is built with the local Rust toolchain by
 # default, or in Docker with ORACLE=docker (for example
 # `make interop ORACLE=docker`), which needs no Rust toolchain.
-ORACLE_IMAGE := graptorq-rqoracle
+ORACLE_IMAGE := graptor-q-rqoracle
 ifeq ($(ORACLE),docker)
 RQORACLE      := $(CURDIR)/tools/rqoracle/target/docker/rqoracle
 ORACLE_TARGET := oracle-docker
@@ -12,7 +12,7 @@ RQORACLE      := $(CURDIR)/tools/rqoracle/target/release/rqoracle
 ORACLE_TARGET := oracle
 endif
 
-.PHONY: all test test-short test-purego test-race test-cross vet lint generate check-generate \
+.PHONY: all test test-short test-purego test-race test-cross vet vet-lib vet-interop lint generate check-generate \
         test-tiers oracle oracle-docker oracle-vectors interop bench bench-compare stat-long fuzz
 
 all: vet test
@@ -42,10 +42,16 @@ test-cross:
 	GOARCH=s390x go test -short -exec qemu-s390x-static ./...
 	GOARCH=386 go test -short ./...
 
-vet:
+vet: vet-lib vet-interop
+
+# The library alone, as CI checks it with its minimum Go version (the interop
+# module needs a newer one).
+vet-lib:
 	go vet ./...
 	GOARCH=arm64 go vet ./...
 	go vet -tags purego ./...
+
+vet-interop:
 	cd interop && go vet ./...
 
 # golangci-lint v2.14 (the version CI pins), over the same build variants as

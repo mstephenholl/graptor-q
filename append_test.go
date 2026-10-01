@@ -7,8 +7,8 @@ import (
 	"math/rand/v2"
 	"testing"
 
-	"github.com/mholland/graptorq/internal/rfc"
-	"github.com/mholland/graptorq/internal/solver"
+	"github.com/mstephenholl/graptor-q/internal/rfc"
+	"github.com/mstephenholl/graptor-q/internal/solver"
 )
 
 func TestAppendSymbols(t *testing.T) {

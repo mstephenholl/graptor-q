@@ -8,8 +8,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mholland/graptorq/internal/solver"
-	"github.com/mholland/graptorq/internal/testutil"
+	"github.com/mstephenholl/graptor-q/internal/solver"
+	"github.com/mstephenholl/graptor-q/internal/testutil"
 )
 
 // sendSymbol passes the symbol with the given ESI from enc to dec, failing

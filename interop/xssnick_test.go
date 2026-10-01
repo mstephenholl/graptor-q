@@ -5,9 +5,9 @@ import (
 	"math/rand/v2"
 	"testing"
 
-	"github.com/mholland/graptorq"
-	"github.com/mholland/graptorq/internal/rfc"
-	"github.com/mholland/graptorq/internal/testutil"
+	"github.com/mstephenholl/graptor-q"
+	"github.com/mstephenholl/graptor-q/internal/rfc"
+	"github.com/mstephenholl/graptor-q/internal/testutil"
 	xraptorq "github.com/xssnick/raptorq"
 )
 

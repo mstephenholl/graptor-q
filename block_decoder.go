@@ -1,9 +1,9 @@
 package graptorq
 
 import (
-	"github.com/mholland/graptorq/internal/gf256"
-	"github.com/mholland/graptorq/internal/rfc"
-	"github.com/mholland/graptorq/internal/solver"
+	"github.com/mstephenholl/graptor-q/internal/gf256"
+	"github.com/mstephenholl/graptor-q/internal/rfc"
+	"github.com/mstephenholl/graptor-q/internal/solver"
 )
 
 // BlockDecoder recovers a single source block from encoding symbols.

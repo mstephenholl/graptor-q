@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/mholland/graptorq/internal/testutil"
+	"github.com/mstephenholl/graptor-q/internal/testutil"
 )
 
 // BenchmarkDecodePaths compares the low-loss decoding path with the full

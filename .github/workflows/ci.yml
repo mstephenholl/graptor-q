@@ -10,12 +10,16 @@ jobs:
       matrix:
         go: ["1.24", "stable"]
     runs-on: ubuntu-latest
+    env:
+      # Test with exactly the matrix Go version: no automatic toolchain
+      # upgrade, so the 1.24 leg checks the module's minimum version.
+      GOTOOLCHAIN: local
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
-      - run: make vet
+      - run: make vet-lib
       - run: go test ./...
       - run: make test-purego
       - run: make test-race
@@ -25,8 +29,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
       # Install only: `make lint` runs it over every build variant and both
@@ -40,8 +44,8 @@ jobs:
   cross:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
       - run: sudo apt-get update && sudo apt-get install -y qemu-user-static
@@ -50,8 +54,8 @@ jobs:
   arm64-native:
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
       - run: go test ./...
@@ -60,10 +64,11 @@ jobs:
   interop:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
+      - run: make vet-interop
       # The oracle is built in Docker with a pinned Rust toolchain.
       - run: make interop ORACLE=docker
       # The committed golden vectors must be exactly what the oracle generates.

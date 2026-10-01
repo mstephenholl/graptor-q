@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	rg "github.com/fgn/raptorgo"
-	"github.com/mholland/graptorq"
-	"github.com/mholland/graptorq/internal/testutil"
+	"github.com/mstephenholl/graptor-q"
+	"github.com/mstephenholl/graptor-q/internal/testutil"
 )
 
 // rgOTI converts an OTI to raptorgo's.

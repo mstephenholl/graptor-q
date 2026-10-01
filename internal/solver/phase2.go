@@ -4,8 +4,8 @@ import (
 	"math/bits"
 	"slices"
 
-	"github.com/mholland/graptorq/internal/gf256"
-	"github.com/mholland/graptorq/internal/rfc"
+	"github.com/mstephenholl/graptor-q/internal/gf256"
+	"github.com/mstephenholl/graptor-q/internal/rfc"
 )
 
 // Phase-2 row operations on right-hand sides, recorded for the plan.

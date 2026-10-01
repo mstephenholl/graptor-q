@@ -10,7 +10,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/mholland/graptorq/internal/rfc/rfctext"
+	"github.com/mstephenholl/graptor-q/internal/rfc/rfctext"
 )
 
 func main() {

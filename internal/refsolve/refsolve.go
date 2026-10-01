@@ -12,8 +12,8 @@ package refsolve
 import (
 	"errors"
 
-	"github.com/mholland/graptorq/internal/gf256"
-	"github.com/mholland/graptorq/internal/rfc"
+	"github.com/mstephenholl/graptor-q/internal/gf256"
+	"github.com/mstephenholl/graptor-q/internal/rfc"
 )
 
 // ErrSingular is returned when A does not have full column rank.

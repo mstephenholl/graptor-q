@@ -1,8 +1,8 @@
-# Builds rqoracle, the cberner/raptorq 2.0.1 oracle behind graptorq's golden
+# Builds rqoracle, the cberner/raptorq 2.0.1 oracle behind graptor-q's golden
 # vectors and interop tests, without a local Rust toolchain.
 #
-#   docker build -t graptorq-rqoracle tools/rqoracle
-#   docker run --rm -i graptorq-rqoracle gen-vectors
+#   docker build -t graptor-q-rqoracle tools/rqoracle
+#   docker run --rm -i graptor-q-rqoracle gen-vectors
 #
 # On Alpine the binary is linked statically against musl, so it also runs
 # directly on any Linux host of the same architecture: `make oracle-docker`

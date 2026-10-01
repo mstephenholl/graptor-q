@@ -7,10 +7,10 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/mholland/graptorq/internal/gf256"
-	"github.com/mholland/graptorq/internal/refsolve"
-	"github.com/mholland/graptorq/internal/rfc"
-	"github.com/mholland/graptorq/internal/testutil"
+	"github.com/mstephenholl/graptor-q/internal/gf256"
+	"github.com/mstephenholl/graptor-q/internal/refsolve"
+	"github.com/mstephenholl/graptor-q/internal/rfc"
+	"github.com/mstephenholl/graptor-q/internal/testutil"
 )
 
 func seqISIs(n int) []uint32 {

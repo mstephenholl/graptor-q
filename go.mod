@@ -1,3 +1,3 @@
-module github.com/mholland/graptorq
+module github.com/mstephenholl/graptor-q
 
 go 1.24

@@ -7,7 +7,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/mholland/graptorq/internal/rfc/rfctext"
+	"github.com/mstephenholl/graptor-q/internal/rfc/rfctext"
 )
 
 // The generated tables must be exactly what the RFC text says.

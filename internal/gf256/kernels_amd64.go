@@ -2,7 +2,7 @@
 
 package gf256
 
-import "github.com/mholland/graptorq/internal/cpu"
+import "github.com/mstephenholl/graptor-q/internal/cpu"
 
 // Tiers, in increasing preference: ssse3 (SSE2 + PSHUFB, 16-byte vectors),
 // avx2 (32-byte vectors) and gfni (avx2 with GF2P8AFFINEQB multiplication).

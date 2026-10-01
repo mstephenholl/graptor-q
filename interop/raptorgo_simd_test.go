@@ -5,7 +5,7 @@ package interop
 import (
 	"testing"
 
-	"github.com/mholland/graptorq"
+	"github.com/mstephenholl/graptor-q"
 )
 
 // raptorgo v0.1.1's SIMD kernels are written against the Go 1.26 API of the

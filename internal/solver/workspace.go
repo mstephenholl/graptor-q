@@ -1,8 +1,8 @@
 package solver
 
 import (
-	"github.com/mholland/graptorq/internal/gf256"
-	"github.com/mholland/graptorq/internal/rfc"
+	"github.com/mstephenholl/graptor-q/internal/gf256"
+	"github.com/mstephenholl/graptor-q/internal/rfc"
 )
 
 // Workspace holds the scratch memory for building plans, so that repeated

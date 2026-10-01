@@ -1,8 +1,11 @@
 name: nightly
 
+# Weekly rather than nightly: in a private repository, the statistics (up
+# to 3 hours) and fuzzing (40 minutes) would use most of the free Actions
+# minutes if run every day. Run it on demand with workflow_dispatch.
 on:
   schedule:
-    - cron: "17 3 * * *"
+    - cron: "17 3 * * 0"
   workflow_dispatch:
 
 jobs:
@@ -10,8 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 240
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
       - run: make stat-long
@@ -19,8 +22,8 @@ jobs:
   fuzz:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
       - run: make fuzz FUZZTIME=10m

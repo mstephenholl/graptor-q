@@ -17,7 +17,7 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/mholland/graptorq/internal/rfc"
+	"github.com/mstephenholl/graptor-q/internal/rfc"
 )
 
 // ErrSingular reports that the constraint matrix does not have full rank:

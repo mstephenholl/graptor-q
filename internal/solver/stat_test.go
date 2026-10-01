@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/mholland/graptorq/internal/rfc"
+	"github.com/mstephenholl/graptor-q/internal/rfc"
 )
 
 // binomialTail returns P(X >= x) for X ~ Binomial(n, p).

@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mholland/graptorq"
+	"github.com/mstephenholl/graptor-q"
 )
 
 // Sending an object over a lossy channel: the sender derives the OTI (which

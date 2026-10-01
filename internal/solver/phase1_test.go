@@ -3,7 +3,7 @@ package solver
 import (
 	"testing"
 
-	"github.com/mholland/graptorq/internal/rfc"
+	"github.com/mstephenholl/graptor-q/internal/rfc"
 )
 
 // Phase 1 heuristics only affect speed, but a regression that inactivates

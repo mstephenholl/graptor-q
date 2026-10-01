@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/mholland/graptorq"
-	"github.com/mholland/graptorq/internal/testutil"
+	"github.com/mstephenholl/graptor-q"
+	"github.com/mstephenholl/graptor-q/internal/testutil"
 	tyh "github.com/takeyourhatoff/raptorq"
 	xraptorq "github.com/xssnick/raptorq"
 )

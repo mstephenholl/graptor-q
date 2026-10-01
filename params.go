@@ -3,7 +3,7 @@ package graptorq
 import (
 	"fmt"
 
-	"github.com/mholland/graptorq/internal/rfc"
+	"github.com/mstephenholl/graptor-q/internal/rfc"
 )
 
 // Partition is the function Partition[I, J] of RFC 6330 Section 4.4.1.2: it
