@@ -29,7 +29,6 @@ Decoding K = 10,000, T = 1280 with 10% loss (about 18.7 ms) breaks down as:
 ### Ideas not yet tried
 
 - **Execution locality.** Reorder independent instructions, or relabel slots in execution order, so that operands are reused while they are still cached. Measure against the current order with `BenchmarkDecodePaths` and the decode-plan benchmarks.
-- **Prune N1 when the HDPC rows are unused.** With enough extra repair symbols (more than about H), phase 2 needs no HDPC rows. Only the reduced right-hand sides reachable from the used binary rows are then needed, instead of all of them.
 - **Prefetching for small symbols in large blocks.** A head-only prefetch of the next instruction's operands measured −12% at K = 50,000, T = 256. It had no effect at T = 1280 and cost 15% on cache-resident plans, so it needs a heuristic on T and the working-set size.
 - **Zero-copy symbol ingestion.** An opt-in API where the caller hands over ownership of symbol buffers would remove one of the two copies, about 6% of decode.
 - **Wider fused kernels.** A multi-source multiply-add for the HDPC phase-2 operations, and an AVX-512 tier on CPUs that have it.
@@ -42,6 +41,7 @@ Decoding K = 10,000, T = 1280 with 10% loss (about 18.7 ms) breaks down as:
 - **Cache-blocked execution.** Replaying the plan over byte stripes was slower at every stripe width, for working sets from 1 MB to 64 MB (see `Plan.ExecuteRange`).
 - **Software prefetching at T = 1280.** Whole-operand prefetch cost 13–20%; head-only prefetch was within ±1%.
 - **Huge pages (`MADV_HUGEPAGE`).** No change at K = 10,000 and 2–3% at K = 50,000.
+- **Pruning N1 when the HDPC rows are unused.** Phase 2 uses one HDPC row for each U column that the binary rows leave without a pivot. That is at least H minus the overhead, so with an overhead below H some HDPC rows are always in use. The benchmarks decode with an overhead of 2, and the eager `Decoder` with about 0. With a larger overhead, the used binary rows still need at least 99% of the N1 operands. That holds for K = 100 to 50,000, with every tenth or a random 30% of the source symbols lost, and for overheads from the first one that uses no HDPC row up to 1,000. At K = 10,000 with every tenth source symbol lost, that first overhead is 12 (H is 11), and the used binary rows need 10,084 of the 10,088 N1 instructions and 56,968 of its 57,459 operands. These rows touch 7,172 pivot columns directly, and the earlier pivots those depend on make up almost all the rest.
 - **Bit-sliced HDPC recurrence.** Keeping z and the HDPC rows bit-sliced, so that adding the binary X_j is one XOR, was 4–5% slower up to K' = 10,017 and neutral at 56,403: AVX2 byte operations already handle 32 coefficients per instruction, and bit-slices need 8 XORs per 64.
 
 ### How to measure
