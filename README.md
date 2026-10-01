@@ -65,9 +65,7 @@ func receiveObject(header []byte, packets <-chan []byte) ([]byte, error) {
 		return nil, err
 	}
 	for pkt := range packets {
-		if done, err := dec.AddPacket(pkt); err != nil {
-			return nil, err
-		} else if done {
+		if done, _ := dec.AddPacket(pkt); done {
 			return dec.AppendObject(nil)
 		}
 	}
@@ -76,13 +74,17 @@ func receiveObject(header []byte, packets <-chan []byte) ([]byte, error) {
 ```
 
 `PayloadSize` is the symbol size T, so each packet is T+4 bytes. `repair`
-counts repair symbols per source block. Set it to the number of packets per
-block that you expect to lose, plus 2. `enc.Layout().KL` is the number of
-source symbols in the largest blocks.
+counts repair symbols per source block, and `enc.Layout().KL` is the number
+of source symbols in the largest blocks. A block decodes once about K+2 of
+its packets arrive. Random loss varies from block to block, so leave a
+margin above the average loss. In a simulation with 20% random loss and
+K = 1000, 253 repair symbols (the average loss plus 2) left 78 of 200
+blocks undecodable, and 313 left none.
 
-The receiver needs the OTI before its first packet. This example sends it as
-the first message. A protocol can also carry it separately, for example in a
-session description.
+The receiver cannot decode without the OTI, so deliver it reliably or
+repeat it. This example sends it once, as the first message. A protocol can
+also carry it separately, for example in a session description. The
+receiver skips packets that `AddPacket` rejects, such as truncated ones.
 
 `example_test.go` has runnable versions of this flow (`Example`), of
 streaming a file larger than memory (`ExampleNewDecoderWriterAt`), and of
@@ -99,11 +101,13 @@ encoding a single block (`ExampleBlockEncoder`).
 The streaming constructors take an `io.ReaderAt` and an `io.WriterAt`, such
 as an `*os.File`. The encoder reads one source block at a time, and the
 decoder writes each block as soon as it decodes, then frees its memory.
-Memory use follows the size of a source block, not of the object. Streaming
-a 64 MB file in 64 source blocks of 1 MB grows the heap by about 1.5 MB. For
-smaller blocks, build the OTI yourself, as `ExampleNewDecoderWriterAt` does.
-An object holds at most 255 source blocks of 56,403 symbols, which is about
-14.7 GB at T = 1024.
+When packets arrive block by block, as `Packets` sends them, memory use
+follows the size of a source block, not of the object. `DeriveOTI` picks
+the fewest source blocks it can, so at T = 1024 it splits a 64 MiB file into
+two blocks of 32 MiB. To stream with less memory, build
+the OTI with more `SourceBlocks`, as `ExampleNewDecoderWriterAt` does. An
+object holds at most 255 source blocks of 56,403 symbols, which is about
+14.7 GB at T = 1024. A larger `PayloadSize` raises that limit.
 
 `Encoder.AppendSymbols` packs several consecutive symbols into one packet
 (RFC 6330 §4.4.2). `BlockEncoder.AppendRepair` appends repair symbols by
@@ -120,7 +124,7 @@ Pass options to the constructors. The defaults suit trusted input.
 | `WithMaxOverhead(n)` | Make a decoder store at most K+n symbols per block. Set it, with n ≥ 2, when packets come from an untrusted source. |
 | `WithMaxMemory(bytes)` | Make blocks that need more working memory fail with `ErrMemoryLimit`. Set it in decoders when the OTI comes from an untrusted source. |
 | `WithConcurrency(n)` | Use at most n goroutines. The default is GOMAXPROCS, and 1 turns parallelism off. |
-| `WithTrimmedPadding()` | Make an `Encoder` leave out the padding at the end of source symbols. The `Decoder` always accepts such symbols. |
+| `WithTrimmedPadding()` | Make an `Encoder` leave out the padding at the end of source symbols. The `Decoder` accepts such symbols, and other receivers must too. |
 | `WithBlockCache(n)` | Keep at most n source blocks ready in an `Encoder`. The default is 1 for `NewEncoderReaderAt` and no limit for `NewEncoder`. |
 
 A `Decoder` decodes each block as soon as it has enough symbols.
@@ -130,10 +134,11 @@ every option.
 
 ## Untrusted input
 
-RaptorQ detects no corruption. One altered symbol makes the decoder return
-wrong data without an error, so authenticate packets that cross an untrusted
-network, for example with a MAC. `WithMaxMemory` limits each block, not the
-object, so also check `TransferLength` in an untrusted OTI.
+RaptorQ detects no corruption. One altered symbol can make the decoder
+return wrong data without an error, so authenticate packets that cross an
+untrusted network, for example with a MAC. `WithMaxMemory` limits each
+block, not the object, so also check `TransferLength` in an untrusted OTI.
+With `WithMaxMemory` set, stop when `AddPacket` returns `ErrMemoryLimit`.
 
 ## Performance
 
@@ -145,19 +150,18 @@ figures, the method, and the SIMD kernel tiers.
 
 ## Correctness and compatibility
 
-graptor-q's encoding symbols match cberner/raptorq 2.0.1 byte for byte, on
-committed golden vectors for 49 objects and in live tests at every K'.
-[docs/validation.md](docs/validation.md) lists the other checks.
+graptor-q's encoding symbols match cberner/raptorq 2.0.1 byte for byte.
+[docs/validation.md](docs/validation.md) lists that check and the others.
 
-xssnick/raptorq v1.5.2 deviates from RFC 6330 at 99 of the 477 K' values,
-starting at K' = 49. At those block sizes its repair symbols differ from
-those of graptor-q and cberner, and it does not interoperate with them.
+xssnick/raptorq v1.5.2 deviates from RFC 6330 at 99 of the 477 block sizes
+K', the first at K' = 49, and does not interoperate with graptor-q at those
+sizes.
 
 ## Development
 
 `make test` runs the test suite.
 [docs/development.md](docs/development.md) describes the repository layout
-and the other make targets, and [ROADMAP.md](ROADMAP.md) lists planned work.
+and the main make targets, and [ROADMAP.md](ROADMAP.md) lists planned work.
 
 ## Notes
 

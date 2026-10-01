@@ -31,6 +31,10 @@ raptorgo's SIMD build, which does not compile with Go 1.27
 With `WithConcurrency(n)`, a large block is processed in parallel byte
 stripes. At T=1280, 4 goroutines make encoding 40–75% faster.
 
+`TestStreamingMemoryBound` streams a 64 MB file in 64 source blocks of 1 MB,
+with 10% of the source symbols lost. The live heap, sampled once per block,
+grows by about 1.5 MB.
+
 ## Kernels
 
 GF(256) symbol arithmetic runs in one of these tiers.
@@ -53,6 +57,7 @@ The library detects CPU features with CPUID directly, because `x/sys/cpu` cannot
 
 - The solver compiles inactivation decoding into a straight-line *plan* of symbol operations.
 - Encoding plans depend only on K', so the library caches them for reuse across blocks.
+- Encoders share a 64 MiB package-wide plan cache by default. `WithPlanCache` gives them a `PlanCache` of their own, and `WithoutPlanCache` turns caching off.
 - Decoders compute only the intermediate symbols needed for the missing source symbols.
 - When only a few source symbols are missing, decoders skip the symbolic solve. They reuse the cached encoding plan and solve a small dense system of at most m+20 equations for the m missing symbols. This path is 1.3–2.8× faster than the full solver, and a measured cost model decides when to take it.
 - Decoders reuse all of their working memory. After `Reset`, decoding a block allocates nothing.
