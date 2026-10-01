@@ -30,17 +30,17 @@ type phase1 struct {
 	colPiv   []int32  // pivot index per column, -1 if none
 	pivRow   []int32  // pivot rows in pivot order
 	pivCol   []uint16 // pivot columns in pivot order
-	chosen   []bool   // per row: chosen as a pivot
 	uCols    []uint16 // inactive columns: phase-1 inactivations, then the P PI columns
 	uIdx     []int32  // U index per column, -1 if not in U
 	vcols    []uint16 // scratch
 
-	// Lazy bucket queue of unchosen rows by their number of nonzeros in V:
-	// bucket[d] is a stack of rows that had degree d when pushed. A row is
-	// pushed again when its degree drops, so an entry is stale (and skipped)
-	// if the row has been chosen or its degree has changed since. Within a
-	// bucket the valid entries, from the top, are the rows in the order they
-	// entered it, most recent first.
+	// Lazy bucket queue of unchosen rows by their number of nonzeros in V
+	// (vdeg, which is chosenRow for the rows chosen as pivots): bucket[d] is
+	// a stack of rows that had degree d when pushed. A row is pushed again
+	// when its degree drops, so an entry is stale (and skipped) if the row
+	// has been chosen or its degree has changed since. Within a bucket the
+	// valid entries, from the top, are the rows in the order they entered it,
+	// most recent first.
 	vdeg   []int32
 	bucket [][]int32
 	minR   int
@@ -80,7 +80,6 @@ func (ph *phase1) run(rs *rowSet) {
 	ph.rs = rs
 	ph.colState = zeroed(ph.colState, L)
 	ph.colPiv = filled(ph.colPiv, L, -1)
-	ph.chosen = zeroed(ph.chosen, n)
 	ph.vdeg = resize(ph.vdeg, n)
 	ph.pivRow = ph.pivRow[:0]
 	ph.pivCol = ph.pivCol[:0]
@@ -157,7 +156,7 @@ func (ph *phase1) run(rs *rowSet) {
 			}
 		}
 
-		ph.chosen[row] = true // its bucket entry is now stale
+		ph.vdeg[row] = chosenRow // its bucket entry is now stale
 		piv := vcols[best]
 		ph.colState[piv] = colPivot
 		ph.colPiv[piv] = int32(len(ph.pivRow))
@@ -184,11 +183,15 @@ func (ph *phase1) run(rs *rowSet) {
 	}
 }
 
+// chosenRow is the V degree of a row chosen as a pivot. Keeping it in vdeg
+// rather than in a separate array saves a cache miss per row visited.
+const chosenRow = -1
+
 // leaveV updates the V degrees of the unchosen rows containing column c,
 // which has just left V (as a pivot or by inactivation).
 func (ph *phase1) leaveV(c uint16) {
 	for _, r := range ph.rs.colRows(int(c)) {
-		if ph.chosen[r] {
+		if ph.vdeg[r] == chosenRow {
 			continue
 		}
 		ph.vdeg[r]--
@@ -209,9 +212,10 @@ func (ph *phase1) push(r int32) {
 	ph.bucket[d] = append(ph.bucket[d], r)
 }
 
-// valid reports whether a bucket-d entry for row r is current.
+// valid reports whether a bucket-d entry for row r is current (d >= 1, so
+// entries of chosen rows are not).
 func (ph *phase1) valid(r int32, d int) bool {
-	return !ph.chosen[r] && int(ph.vdeg[r]) == d
+	return int(ph.vdeg[r]) == d
 }
 
 // top returns the most recent valid row of bucket d, dropping stale entries
@@ -271,7 +275,7 @@ func (ph *phase1) nextComponentRow() int32 {
 	for ph.compNext < len(ph.compStart)-1 {
 		for ph.compPos < int(ph.compStart[ph.compNext+1]) {
 			r := ph.compRows[ph.compPos]
-			if !ph.chosen[r] && ph.vdeg[r] == 2 {
+			if ph.vdeg[r] == 2 {
 				return r
 			}
 			ph.compPos++

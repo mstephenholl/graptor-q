@@ -222,7 +222,7 @@ func (p2 *phase2) uParts(ph *phase1) {
 
 	cand := p2.cand[:0]
 	for r := range rs.nrows() {
-		if !ph.chosen[r] {
+		if ph.vdeg[r] != chosenRow {
 			cand = append(cand, int32(r))
 		}
 	}
