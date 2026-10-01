@@ -35,7 +35,7 @@ jobs:
           go-version: stable
       - name: Build base and head with this branch's BenchmarkGate
         env:
-          GOTOOLCHAIN: local
+          GOTOOLCHAIN: local # one compiler for both sides, whatever their go.mod asks
           BASE: ${{ inputs.base }}
           HEAD: ${{ inputs.head }}
         run: |
@@ -49,6 +49,7 @@ jobs:
             echo "${side}_sha=$sha" >> "$GITHUB_ENV"
             dir=$RUNNER_TEMP/$side
             git worktree add --detach "$dir" "$sha"
+            # Commits from before the rename declare another module path.
             mod=$(sed -n 's/^module //p' "$dir/go.mod")
             sed "s#github.com/mstephenholl/graptor-q#$mod#g" gate_bench_test.go > "$dir/gate_bench_test.go"
             (cd "$dir" && go test -c -trimpath -o "$GITHUB_WORKSPACE/perf/$side.test" .)

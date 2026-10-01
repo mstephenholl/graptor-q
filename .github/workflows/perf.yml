@@ -33,7 +33,7 @@ jobs:
       - id: build
         name: Build base and head
         env:
-          GOTOOLCHAIN: local
+          GOTOOLCHAIN: local # one compiler for both sides, whatever their go.mod asks
         run: |
           mkdir -p perf
           git worktree add --detach "$RUNNER_TEMP/base" HEAD^1
