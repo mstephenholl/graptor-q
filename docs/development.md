@@ -1,4 +1,6 @@
-# Repository layout
+# Development
+
+## Repository layout
 
 | Path | Contents |
 |---|---|
@@ -9,6 +11,8 @@
 | `internal/refsolve` | Dense reference implementation (test oracle only) |
 | `interop/` | Separate module: differential tests against xssnick, takeyourhatoff and raptorgo, live cberner tests, comparison benchmarks |
 | `tools/rqoracle` | Rust oracle built on cberner/raptorq 2.0.1: golden vectors, encoding and decoding for the interop tests, and benchmarks. Builds with Cargo or, without a Rust toolchain, with its Dockerfile |
+
+## Make targets
 
 The main make targets are `test`, `test-purego`, `test-race`, `test-cross`
 (arm64, s390x, 386), `lint` (golangci-lint v2.14), `interop`, `oracle-vectors`,

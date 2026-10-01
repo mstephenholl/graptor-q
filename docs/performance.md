@@ -30,3 +30,29 @@ raptorgo's SIMD build, which does not compile with Go 1.27
 
 With `WithConcurrency(n)`, a large block is processed in parallel byte
 stripes. At T=1280, 4 goroutines make encoding 40–75% faster.
+
+## Kernels
+
+GF(256) symbol arithmetic runs in one of these tiers.
+
+| Tier | Selection | MulAdd throughput (16 KiB, one core) |
+|---|---|---|
+| GFNI (`VGF2P8AFFINEQB`) | amd64 with AVX2 and GFNI | 74 GB/s |
+| AVX2 (`VPSHUFB` nibble tables) | amd64 with AVX2 | 45 GB/s |
+| SSSE3 (`PSHUFB` nibble tables) | amd64 with SSSE3 but no AVX2 | 27 GB/s |
+| NEON (`TBL` nibble tables) | arm64 | not measured |
+| Generic Go | any CPU, or forced with `-tags purego` | 3 GB/s |
+
+The library picks the best supported tier at startup. `GRAPTORQ_GF256=<tier>` forces a tier for testing, and `make test-tiers` runs the suite on each one.
+
+The GFNI tier cannot use `GF2P8MULB`, because that instruction hard-codes the AES polynomial 0x11B and RFC 6330 uses 0x11D.
+
+The library detects CPU features with CPUID directly, because `x/sys/cpu` cannot report GFNI without AVX-512.
+
+## How the solver saves time
+
+- The solver compiles inactivation decoding into a straight-line *plan* of symbol operations.
+- Encoding plans depend only on K', so the library caches them for reuse across blocks.
+- Decoders compute only the intermediate symbols needed for the missing source symbols.
+- When only a few source symbols are missing, decoders skip the symbolic solve. They reuse the cached encoding plan and solve a small dense system of at most m+20 equations for the m missing symbols. This path is 1.3–2.8× faster than the full solver, and a measured cost model decides when to take it.
+- Decoders reuse all of their working memory. After `Reset`, decoding a block allocates nothing.

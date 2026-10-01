@@ -1,5 +1,18 @@
 # Validation
 
+## Scope
+
+graptor-q implements all of RFC 6330:
+
+- Object Transmission Information (12-byte OTI, including erratum 5548).
+- FEC Payload IDs.
+- Source block and sub-block partitioning with symbol alignment and sub-symbol interleaving (§4.4).
+- The §4.3 parameter derivation.
+- Any K up to 56,403 per block, any ESI up to 2²⁴−1.
+- Packets that carry several consecutive symbols, and source symbols without the padding at their end (§4.4.2). Decoders accept such symbols in `AddPacket` and `AddSymbol`, and reject a symbol that leaves out anything else. With sub-blocks, several symbols of the last source block can end with padding.
+
+## Checks
+
 | Check | What it establishes |
 |---|---|
 | Tables generated from the RFC text (`testdata/rfc6330.txt`, SHA-256 pinned) and re-checked on every test run | No transcription errors in V0–V3, Deg, Table 2, OCT_EXP and OCT_LOG |
@@ -32,3 +45,9 @@ its repair symbols differ from every RFC-compliant implementation (graptor-q and
 cberner agree there). Its encoder and decoder share the deviation, so it still
 round-trips with itself, but it does not interoperate at those block sizes.
 `interop/xssnick_test.go` documents this and fails if the behaviour changes.
+
+## Credits
+
+The first known-answer vectors come from github.com/takeyourhatoff/raptorq
+(MIT), which generated them with cberner/raptorq. The golden vectors come
+from cberner/raptorq (Apache-2.0).
