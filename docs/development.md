@@ -104,6 +104,11 @@ more than 10%, raise `-rounds` before requiring the check: a weaker gate
 would miss the known slowdown at K=1000. Repeat the
 calibration when the suite changes or the check raises a false alarm.
 
+The amd64 kernels start every loop at a 64-byte boundary (`PCALIGN $64`).
+Without it, a change anywhere in the binary can move a loop within its cache
+line: on three GitHub runners, two builds with identical kernels differed
+by up to 26.6%, and by at most 4.2% with the alignment.
+
 A slowdown smaller than the threshold passes, and several of them add up.
 Compare an older release with `main` from time to time with
 `perf-calibrate.yml` (base = the release tag).
