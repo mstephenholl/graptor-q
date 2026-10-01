@@ -1,7 +1,7 @@
-name: nightly
+name: weekly
 
-# Weekly rather than nightly, to limit Actions usage: the statistics take up
-# to 3 hours and fuzzing 40 minutes. Run it on demand with workflow_dispatch.
+# Weekly, to limit Actions usage: the statistics take up to 3 hours and
+# fuzzing 40 minutes. Run it on demand with workflow_dispatch.
 on:
   schedule:
     - cron: "17 3 * * 0"
