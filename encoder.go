@@ -183,9 +183,7 @@ func parallel(ctx context.Context, n, limit int, f func(i int) error) error {
 		mu.Unlock()
 	}
 	for range min(limit, n) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for {
 				mu.Lock()
 				i, stop := next, first != nil
@@ -202,7 +200,7 @@ func parallel(ctx context.Context, n, limit int, f func(i int) error) error {
 					fail(err)
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	return first

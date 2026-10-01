@@ -230,9 +230,7 @@ func TestPlanCacheConcurrent(t *testing.T) {
 	cache := NewPlanCache(1 << 20) // small: forces evictions
 	var wg sync.WaitGroup
 	for g := range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := range 20 {
 				k := 1 + (g*37+i*101)%400
 				data := testutil.VectorData(k * 4)
@@ -248,7 +246,7 @@ func TestPlanCacheConcurrent(t *testing.T) {
 					t.Error("cached plan gives a different symbol")
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

@@ -242,11 +242,9 @@ func (pl *Plan) ExecuteParallel(work []byte, T int, in [][]byte, n int) {
 	var wg sync.WaitGroup
 	for lo := 0; lo < T; lo += size {
 		hi := min(lo+size, T)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			pl.ExecuteRange(work, T, in, lo, hi)
-		}()
+		})
 	}
 	wg.Wait()
 }
