@@ -71,5 +71,5 @@ by memory bandwidth. EVEX-encoded GFNI on 512-bit registers comes for free.
 
 ## Other known gaps
 
-- **CI:** the main workflow runs on every push to main and on every pull request in the private repository github.com/mstephenholl/graptor-q, including the native arm64 job. The weekly statistics and fuzzing workflow has not run yet; it can be started by hand.
+- **CI:** the main workflow runs on every push to main and on every pull request, including the native arm64 job, and every commit that passes it on main is released as the next version (see docs/development.md). The nightly statistics and fuzzing workflow has not run yet; it can be started by hand.
 - **Project:** a license (none for now, by decision); review the RFC 6330 IPR disclosures; report the xssnick P1 deviation and raptorgo's Go 1.27 SIMD build failure upstream.

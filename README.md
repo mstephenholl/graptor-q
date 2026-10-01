@@ -20,10 +20,6 @@ go get github.com/mstephenholl/graptor-q
 
 graptor-q needs Go 1.24 or later. The package name is `graptorq`.
 
-The repository is private. Set `GOPRIVATE=github.com/mstephenholl/*` before
-you run `go get`, so that Go fetches the module from GitHub with your Git
-credentials instead of through the public module proxy.
-
 ## Quick start
 
 The sender derives the Object Transmission Information (OTI) from the object
