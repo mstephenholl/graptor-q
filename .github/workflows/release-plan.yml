@@ -1,0 +1,35 @@
+name: release-plan
+
+# Gates pull requests on their release label: fails where the release job
+# would refuse after the merge, or when apidiff finds an incompatible API
+# change below release:minor in v0 or release:major from v1 on. Re-runs on
+# every label change, so changing the label is the fix.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: release-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  release-plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - name: Install apidiff
+        run: GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/exp/cmd/apidiff@v0.0.0-20260908205506-85c1c2202aba
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: go run ./internal/cmd/release -commit HEAD -plan-pr "$PR" -apidiff "$RUNNER_TEMP/bin/apidiff"

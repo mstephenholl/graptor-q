@@ -1,0 +1,111 @@
+name: perf
+
+# Fails a pull request that makes BenchmarkGate slower, running the base and
+# head builds alternately on one runner (internal/cmd/perfgate). To accept a
+# regression, the repository owner adds the label perf:accept and re-runs the
+# failed jobs, which repeats only the comparison.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      skip: ${{ steps.build.outputs.skip }}
+    steps:
+      # On pull_request, checkout gives the merge commit; its first parent
+      # (HEAD^1) is the tip of the base branch.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - id: build
+        name: Build base and head
+        env:
+          GOTOOLCHAIN: local # one compiler for both sides, whatever their go.mod asks
+        run: |
+          mkdir -p perf
+          git worktree add --detach "$RUNNER_TEMP/base" HEAD^1
+          (cd "$RUNNER_TEMP/base" && go test -c -trimpath -o "$GITHUB_WORKSPACE/perf/base.test" .)
+          go test -c -trimpath -o perf/head.test .
+          if cmp -s perf/base.test perf/head.test; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+          go build -o perf/perfgate ./internal/cmd/perfgate
+      - name: Measure
+        if: steps.build.outputs.skip != 'true'
+        run: |
+          perf/perfgate run -base perf/base.test -head perf/head.test \
+            -base-label "$(git rev-parse --short HEAD^1)" -head-label "${HEAD_SHA::7}" \
+            -cpu 1 -o perf/samples.json
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      # upload-artifact v4+ rejects a second upload under the same name, so a
+      # re-run of all jobs needs overwrite.
+      - if: steps.build.outputs.skip != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: perf
+          path: |
+            perf/samples.json
+            perf/perfgate
+          retention-days: 30
+          overwrite: true
+
+  # Runs even when measure failed, to fail itself: GitHub counts a required
+  # check that is skipped as passing.
+  perf:
+    needs: measure
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read # the label events of a pull request are issue events
+      pull-requests: read
+    steps:
+      - name: Require the measurement
+        if: needs.measure.result != 'success'
+        run: |
+          echo "::error::measure ended with ${{ needs.measure.result }}"
+          exit 1
+      - name: Identical binaries
+        if: needs.measure.outputs.skip == 'true'
+        run: echo "The base and head test binaries are identical; nothing to measure." >> "$GITHUB_STEP_SUMMARY"
+      - if: needs.measure.outputs.skip != 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: perf
+          path: perf
+      - name: Compare
+        if: needs.measure.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          chmod +x perf/perfgate
+          # Read live: a re-run replays the original event payload.
+          accepted_by=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/events" \
+            --jq '.[] | select(.event == "labeled" and .label.name == "perf:accept") | .actor.login' | tail -n 1)
+          has_label=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/labels" --jq '.[].name' | grep -cx 'perf:accept' || true)
+
+          status=0
+          perf/perfgate verdict perf/samples.json >> "$GITHUB_STEP_SUMMARY" || status=$?
+          if [ "$status" -eq 1 ] && [ "$has_label" -gt 0 ] && [ "$accepted_by" = "$OWNER" ]; then
+            echo "::warning::Regression accepted by @$OWNER with the perf:accept label."
+            echo "**Regression accepted by @$OWNER (label perf:accept).**" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          [ "$status" -eq 1 ] && echo "::error::Slower than the base beyond the threshold: see the job summary."
+          exit "$status"

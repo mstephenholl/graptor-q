@@ -1,9 +1,24 @@
 name: ci
 
+# Gates pull requests through the ci job, which the main ruleset requires,
+# and releases each commit of main that passes. To release without a merge,
+# dispatch it on main: a re-run replays the original event, so a run from
+# before the repository went public still sees it private.
+
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One group per commit of main: in a shared group, GitHub cancels a pending
+# run when a newer one queues, even without cancel-in-progress.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -74,3 +89,56 @@ jobs:
       - run: make interop ORACLE=docker
       # The committed golden vectors must be exactly what the oracle generates.
       - run: make oracle-vectors ORACLE=docker && git diff --exit-code testdata/vectors
+
+  # Runs even when a job failed, to fail itself: GitHub counts a required
+  # check that is skipped as passing.
+  ci:
+    if: ${{ !cancelled() }}
+    needs: [test, lint, cross, arm64-native, interop]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every job to succeed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          for r in $RESULTS; do
+            [ "$r" = success ] || exit 1
+          done
+
+  # Waits for a public repository: the module proxy cannot fetch a private
+  # module, and pkg.go.dev keeps each version's README.
+  release:
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && !github.event.repository.private
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    # GitHub keeps only the newest pending job of a group; a skipped release
+    # is folded into the next one.
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: go run ./internal/cmd/release -commit "$GITHUB_SHA"
+      # Makes the version visible on pkg.go.dev without waiting for a user
+      # to fetch it.
+      - name: Fetch the version through the Go module proxy
+        if: steps.release.outputs.tag != ''
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}
+        env:
+          GOPROXY: https://proxy.golang.org
+          MODULE: ${{ steps.release.outputs.module }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: go list -m "$MODULE@$TAG"
