@@ -1,7 +1,7 @@
 name: perf-calibrate
 
 # Measures the noise and the sensitivity of the perf check on GitHub's
-# runners, to choose PERF_THRESHOLD in perf.yml before the check becomes
+# runners, to choose perfgate's -threshold default before the check becomes
 # required (docs/development.md, "Perf check"). Each parallel run compares
 # base and head on its own runner exactly as perf.yml does, with the
 # BenchmarkGate of the branch this workflow runs on copied onto both commits.
@@ -30,10 +30,6 @@ on:
 
 permissions:
   contents: read
-
-env:
-  PERF_ROUNDS: "20" # keep equal to perf.yml
-  PERF_BENCHTIME: 200ms
 
 jobs:
   calibrate-measure:
@@ -75,8 +71,7 @@ jobs:
         run: |
           perf/perfgate run -base perf/base.test -head perf/head.test \
             -base-label "${base_sha::7}" -head-label "${head_sha::7}" \
-            -rounds "$PERF_ROUNDS" -benchtime "$PERF_BENCHTIME" -cpu 1 \
-            -o "perf/samples-${{ matrix.run }}.json"
+            -cpu 1 -o "perf/samples-${{ matrix.run }}.json"
       - uses: actions/upload-artifact@v7
         with:
           name: samples-${{ matrix.run }}

@@ -5,8 +5,9 @@ name: perf
 # runner's CPU model and its neighbours affect both sides alike; a stored
 # baseline from another runner would compare different machines.
 #
-# The suite is BenchmarkGate (gate_bench_test.go). The threshold below is
-# calibrated with perf-calibrate.yml; see docs/development.md, "Perf check".
+# The suite is BenchmarkGate (gate_bench_test.go). The threshold is
+# perfgate's -threshold default, calibrated with perf-calibrate.yml; see
+# docs/development.md, "Perf check".
 #
 # To accept a regression: add the label perf:accept (it counts only when the
 # repository owner adds it), then re-run the failed jobs. Only the perf job
@@ -21,11 +22,6 @@ permissions:
 concurrency:
   group: perf-${{ github.event.pull_request.number }}
   cancel-in-progress: true
-
-env:
-  PERF_THRESHOLD: "5" # percent; calibrated value goes here
-  PERF_ROUNDS: "20"
-  PERF_BENCHTIME: 200ms
 
 jobs:
   measure:
@@ -65,7 +61,7 @@ jobs:
         run: |
           perf/perfgate run -base perf/base.test -head perf/head.test \
             -base-label "$(git rev-parse --short HEAD^1)" -head-label "${HEAD_SHA::7}" \
-            -rounds "$PERF_ROUNDS" -benchtime "$PERF_BENCHTIME" -cpu 1 -o perf/samples.json
+            -cpu 1 -o perf/samples.json
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       - if: steps.build.outputs.skip != 'true'
@@ -118,11 +114,11 @@ jobs:
           has_label=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/labels" --jq '.[].name' | grep -cx 'perf:accept' || true)
 
           status=0
-          perf/perfgate verdict -threshold "$PERF_THRESHOLD" perf/samples.json >> "$GITHUB_STEP_SUMMARY" || status=$?
+          perf/perfgate verdict perf/samples.json >> "$GITHUB_STEP_SUMMARY" || status=$?
           if [ "$status" -eq 1 ] && [ "$has_label" -gt 0 ] && [ "$accepted_by" = "$OWNER" ]; then
             echo "::warning::Regression accepted by @$OWNER with the perf:accept label."
             echo "**Regression accepted by @$OWNER (label perf:accept).**" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          [ "$status" -eq 1 ] && echo "::error::Slower than the base beyond $PERF_THRESHOLD%: see the job summary."
+          [ "$status" -eq 1 ] && echo "::error::Slower than the base beyond the threshold: see the job summary."
           exit "$status"

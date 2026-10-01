@@ -39,25 +39,25 @@ func repeat(r float64, n int) []float64 {
 
 func TestCompare(t *testing.T) {
 	// 10% slower in every round.
-	if r := Compare(samples(repeat(1.10, 20)...), 0.05)[0]; r.Verdict != Regressed || math.Abs(r.Ratio-1.10) > 1e-9 {
+	if r := Compare(samples(repeat(1.10, 20)...), 5)[0]; r.Verdict != Regressed || math.Abs(r.Ratio-1.10) > 1e-9 {
 		t.Errorf("uniform 10%% slowdown: %+v", r)
 	}
 	// 10% slower in 14 rounds and faster in 6: the median is above the
 	// threshold but the interval reaches below zero.
 	mixed := append(repeat(1.10, 14), repeat(0.97, 6)...)
-	if r := Compare(samples(mixed...), 0.05)[0]; r.Verdict != Same {
+	if r := Compare(samples(mixed...), 5)[0]; r.Verdict != Same {
 		t.Errorf("14 of 20 slower: %+v", r)
 	}
 	// 3% slower every round: significant, but under the threshold.
-	if r := Compare(samples(repeat(1.03, 20)...), 0.05)[0]; r.Verdict != Same {
+	if r := Compare(samples(repeat(1.03, 20)...), 5)[0]; r.Verdict != Same {
 		t.Errorf("uniform 3%% slowdown: %+v", r)
 	}
 	// One wild round does not move the median.
 	wild := append(repeat(1.0, 19), 3.0)
-	if r := Compare(samples(wild...), 0.05)[0]; r.Verdict != Same || r.Ratio != 1 {
+	if r := Compare(samples(wild...), 5)[0]; r.Verdict != Same || r.Ratio != 1 {
 		t.Errorf("one outlier: %+v", r)
 	}
-	if r := Compare(samples(repeat(0.8, 20)...), 0.05)[0]; r.Verdict != Improved {
+	if r := Compare(samples(repeat(0.8, 20)...), 5)[0]; r.Verdict != Improved {
 		t.Errorf("uniform 20%% speedup: %+v", r)
 	}
 }
@@ -81,5 +81,14 @@ PASS
 	if err != nil || cpu != "AMD EPYC 7763 64-Core Processor" || len(res) != 2 ||
 		res["BenchmarkGate/op=encode/K=100/T=1280"] != 47935 || res["BenchmarkGate/op=muladd/tier=gfni/n=1280"] != 19.23 {
 		t.Errorf("parseBench = %v, %q, %v", res, cpu, err)
+	}
+}
+
+func TestCalibrationReport(t *testing.T) {
+	md := CalibrationReport(Calibrate([]*Samples{samples(repeat(1.10, 20)...)}, []float64{5, 15}))
+	for _, row := range []string{"| `x` | +10.0% | +10.0% | +10.0% |", "| 5% | 1/1 |", "| 15% | 0/1 |"} {
+		if !strings.Contains(md, row) {
+			t.Errorf("calibration report lacks %q:\n%s", row, md)
+		}
 	}
 }

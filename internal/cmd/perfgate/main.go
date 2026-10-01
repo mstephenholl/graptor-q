@@ -2,8 +2,8 @@
 // one machine, for the perf check of pull requests
 // (.github/workflows/perf.yml).
 //
-//	perfgate run -base base.test -head head.test -bench '^BenchmarkGate$' -rounds 20 -o samples.json
-//	perfgate verdict -threshold 5 samples.json         # exit 1 on a regression
+//	perfgate run -base base.test -head head.test -o samples.json
+//	perfgate verdict samples.json         # exit 1 on a regression
 //	perfgate calibrate samples-1.json samples-2.json ...
 //
 // run executes the two test binaries alternately, one process per case and
@@ -63,22 +63,27 @@ func main() {
 		usage()
 	}
 	if errors.Is(err, errRegression) {
-		os.Exit(1)
+		os.Exit(exitRegression)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "perfgate:", err)
-		os.Exit(2)
+		os.Exit(exitError)
 	}
 }
 
+// Exit statuses. perf.yml lets the perf:accept label override exit status 1
+// only, so that a failed measurement can never be accepted as a regression.
+const (
+	exitRegression = 1
+	exitError      = 2
+)
+
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: perfgate run|verdict|calibrate [flags] (see the package comment)")
-	os.Exit(2)
+	os.Exit(exitError)
 }
 
-// errRegression is returned by verdict when a case regressed. main exits
-// with status 1 for it and 2 for any other error, so that the workflow's
-// override applies to regressions only.
+// errRegression is returned by verdict when a case regressed.
 var errRegression = errors.New("performance regression")
 
 func cmdRun(args []string) error {
@@ -237,7 +242,7 @@ func readSamples(path string) (*Samples, error) {
 
 func cmdVerdict(args []string, w io.Writer) error {
 	fs := flag.NewFlagSet("verdict", flag.ExitOnError)
-	threshold := fs.Float64("threshold", 5, "largest accepted slowdown, in percent")
+	thresholdPct := fs.Float64("threshold", 5, "largest accepted slowdown, in percent")
 	_ = fs.Parse(args)
 	if fs.NArg() != 1 {
 		return errors.New("verdict takes one samples file")
@@ -246,7 +251,7 @@ func cmdVerdict(args []string, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	report, regressed := Report(s, Compare(s, *threshold/100), *threshold)
+	report, regressed := Report(s, Compare(s, *thresholdPct), *thresholdPct)
 	if _, err := io.WriteString(w, report); err != nil {
 		return err
 	}
@@ -258,11 +263,11 @@ func cmdVerdict(args []string, w io.Writer) error {
 
 // Report formats the results as the Markdown of the job summary and counts
 // the regressed cases.
-func Report(s *Samples, results []Result, threshold float64) (md string, regressed int) {
+func Report(s *Samples, results []Result, thresholdPct float64) (md string, regressed int) {
 	var w strings.Builder
 	fmt.Fprintf(&w, "### Benchmarks: %s (head) vs %s (base)\n\n", s.Head, s.Base)
 	fmt.Fprintf(&w, "%d interleaved rounds of %s per case, one core of `%s`. ", s.Rounds, s.Benchtime, s.CPU)
-	fmt.Fprintf(&w, "A case fails when its median time ratio exceeds +%.1f%% and the 95%% interval of the median lies above zero.\n\n", threshold)
+	fmt.Fprintf(&w, "A case fails when its median time ratio exceeds +%.1f%% and the 95%% interval of the median lies above zero.\n\n", thresholdPct)
 	fmt.Fprintln(&w, "| case | head/base time | 95% interval | head slower in | verdict |")
 	fmt.Fprintln(&w, "|---|---:|---:|---:|---|")
 	for _, r := range results {
@@ -298,7 +303,7 @@ func cmdCalibrate(args []string, w io.Writer) error {
 		}
 		all = append(all, s)
 	}
-	_, err := io.WriteString(w, CalibrationReport(Calibrate(all, []float64{0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.10, 0.15})))
+	_, err := io.WriteString(w, CalibrationReport(Calibrate(all, []float64{2, 3, 4, 5, 6, 8, 10, 15})))
 	return err
 }
 
@@ -315,7 +320,7 @@ func CalibrationReport(c Calibration) string {
 	fmt.Fprintln(&w, "\n| threshold | runs that would fail |")
 	fmt.Fprintln(&w, "|---:|---:|")
 	for _, t := range c.Thresholds {
-		fmt.Fprintf(&w, "| %.0f%% | %d/%d |\n", t.Threshold*100, t.FailingRuns, c.Runs)
+		fmt.Fprintf(&w, "| %.0f%% | %d/%d |\n", t.ThresholdPct, t.FailingRuns, c.Runs)
 	}
 	return w.String()
 }

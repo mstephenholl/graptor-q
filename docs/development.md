@@ -31,7 +31,8 @@ required checks pass (`.github/rulesets/main.json`):
 - `release-plan`: the release labels are valid and high enough for the
   change to the exported API; the job summary shows the version the merge
   will release.
-- `perf`: the library is not slower than on `main`.
+- `perf`, once it is calibrated (step 7 of "Going public"): the library
+  is not slower than on `main`.
 
 The repository owner can bypass every rule: merge without the checks, or
 push to `main` directly.
@@ -81,8 +82,10 @@ repository owner adds it) and re-run the failed jobs of the run. Only the
 
 ### Calibration
 
-The threshold was chosen with `perf-calibrate.yml`, which runs the same
-comparison on 10 runners at once:
+The threshold is the default of `perfgate verdict -threshold`
+(`internal/cmd/perfgate`), changed there after calibration. It is chosen
+with `perf-calibrate.yml`, which runs the same comparison on 10 runners at
+once:
 
 | base / head | what it measures | result |
 |---|---|---|
@@ -111,13 +114,15 @@ does nothing while the repository is private. The steps, in order:
 3. Right after, require approval before workflows run for pull requests
    from outside contributors (the endpoint answers 422 while private):
    `gh api -X PUT repos/mstephenholl/graptor-q/actions/permissions/fork-pr-contributor-approval -f approval_policy=all_external_contributors`
-4. Create the labels and the rulesets, without the perf check until it is
-   calibrated: `.github/rulesets/apply.sh --without-perf`. It prints the
-   rulesets GitHub stored. Check that `bypass_actors` lists your account
-   and that `current_user_can_bypass` is `always`.
+4. Create the labels and the rulesets: `.github/rulesets/apply.sh`. It
+   prints the rulesets GitHub stored, and fails unless you can always
+   bypass each of them.
 5. Release v0.1.0: `gh workflow run ci --ref main`, or merge a pull
    request. Re-running an older run of `main` releases nothing, because a
    re-run reuses its event, which says the repository is private.
-6. Calibrate the perf check (above), fill in the table, and set
-   `PERF_THRESHOLD` in `perf.yml` in a pull request.
-7. Require the perf check: `.github/rulesets/apply.sh`.
+6. Calibrate the perf check (above), fill in the table, and set the
+   `-threshold` default of `perfgate verdict` in
+   `internal/cmd/perfgate/main.go` in a pull request.
+7. Require the perf check: add `perf` to the required checks in
+   `.github/rulesets/main.json` in a pull request, merge it, and run
+   `.github/rulesets/apply.sh`.

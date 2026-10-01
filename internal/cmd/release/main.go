@@ -60,7 +60,7 @@ func main() {
 	if *planPR > 0 && *apidiff == "" {
 		log.Fatal("-plan-pr needs -apidiff")
 	}
-	r := &releaser{repo: repo, base: "github.com/" + repo}
+	r := &releaser{repo: repo, modBase: "github.com/" + repo}
 	sha, err := git("rev-parse", "--verify", *commit+"^{commit}")
 	if err != nil {
 		log.Fatal(err)
@@ -76,8 +76,8 @@ func main() {
 }
 
 type releaser struct {
-	repo string // owner/name
-	base string // module path without a /vN suffix
+	repo    string // owner/name
+	modBase string // module path without a /vN suffix
 }
 
 type tag struct {
@@ -254,7 +254,7 @@ func (r *releaser) next(latest *tag, level Level, sha string) (Version, error) {
 	if err != nil {
 		return Version{}, err
 	}
-	return Next(latest.version(), level, path, r.base)
+	return Next(latest.version(), level, path, r.modBase)
 }
 
 // moduleAt returns the module path declared by go.mod at commit c.
@@ -333,7 +333,7 @@ func (r *releaser) ensureRelease(t tag, prev *tag) error {
 		log.Printf("release %s exists", t.v)
 	} else {
 		args := []string{"release", "create", t.v.String(), "--verify-tag", "--title", t.v.String(),
-			"--notes", fmt.Sprintf("```\ngo get %s@%s\n```", ModuleFor(r.base, t.v), t.v), "--generate-notes"}
+			"--notes", fmt.Sprintf("```\ngo get %s@%s\n```", ModuleFor(r.modBase, t.v), t.v), "--generate-notes"}
 		if prev != nil {
 			args = append(args, "--notes-start-tag", prev.v.String())
 		}
@@ -345,31 +345,23 @@ func (r *releaser) ensureRelease(t tag, prev *tag) error {
 	if err := summary(fmt.Sprintf("Released **%s** at %s.\n", t.v, t.commit)); err != nil {
 		return err
 	}
-	return output(map[string]string{"tag": t.v.String(), "module": ModuleFor(r.base, t.v)})
+	return output(map[string]string{"tag": t.v.String(), "module": ModuleFor(r.modBase, t.v)})
 }
 
 // releaseTags returns the release tags in increasing version order, with
 // the commits they point at (annotated tags peeled).
 func releaseTags() ([]tag, error) {
-	out, err := git("for-each-ref", "--format=%(refname:strip=2) %(objectname) %(*objectname)", "refs/tags")
+	const format = "%(refname:strip=2) %(if)%(*objectname)%(then)%(*objectname)%(else)%(objectname)%(end)"
+	out, err := git("for-each-ref", "--format="+format, "refs/tags")
 	if err != nil {
 		return nil, err
 	}
 	var tags []tag
 	for line := range strings.SplitSeq(out, "\n") {
-		f := strings.Fields(line)
-		if len(f) < 2 {
-			continue
+		name, commit, _ := strings.Cut(line, " ")
+		if v, ok := ParseVersion(name); ok {
+			tags = append(tags, tag{v, commit})
 		}
-		v, ok := ParseVersion(f[0])
-		if !ok {
-			continue
-		}
-		c := f[1]
-		if len(f) == 3 {
-			c = f[2]
-		}
-		tags = append(tags, tag{v, c})
 	}
 	slices.SortFunc(tags, func(a, b tag) int {
 		switch {

@@ -28,7 +28,7 @@ type Result struct {
 
 // Compare returns one Result per case, slowest head first. A case regresses
 // when both hold:
-//   - its median ratio exceeds 1+threshold (the slowdown matters), and
+//   - its median ratio exceeds 1+thresholdPct/100 (the slowdown matters), and
 //   - the low end of the 95% interval of the median is above 1 (it is not
 //     noise: the head was slower in clearly more than half of the rounds).
 //
@@ -37,7 +37,8 @@ type Result struct {
 // median and its order-statistic interval (the sign test's) assume nothing
 // about the distribution, and one disturbed round moves them by at most one
 // position.
-func Compare(s *Samples, threshold float64) []Result {
+func Compare(s *Samples, thresholdPct float64) []Result {
+	limit := 1 + thresholdPct/100
 	var out []Result
 	for name, v := range s.NsPerOp {
 		n := min(len(v[0]), len(v[1]))
@@ -60,9 +61,9 @@ func Compare(s *Samples, threshold float64) []Result {
 			Rounds: n,
 		}
 		switch {
-		case r.Ratio > 1+threshold && r.Lo > 1:
+		case r.Ratio > limit && r.Lo > 1:
 			r.Verdict = Regressed
-		case r.Ratio < 1/(1+threshold) && r.Hi < 1:
+		case r.Ratio < 1/limit && r.Hi < 1:
 			r.Verdict = Improved
 		}
 		out = append(out, r)
@@ -128,11 +129,11 @@ type CaseSpread struct {
 }
 
 type ThresholdOutcome struct {
-	Threshold   float64
-	FailingRuns int // runs in which at least one case would regress
+	ThresholdPct float64
+	FailingRuns  int // runs in which at least one case would regress
 }
 
-func Calibrate(runs []*Samples, thresholds []float64) Calibration {
+func Calibrate(runs []*Samples, thresholdsPct []float64) Calibration {
 	c := Calibration{Runs: len(runs)}
 	byCase := map[string][]Result{}
 	for _, s := range runs {
@@ -156,8 +157,8 @@ func Calibrate(runs []*Samples, thresholds []float64) Calibration {
 		c.Cases = append(c.Cases, cs)
 	}
 	slices.SortFunc(c.Cases, func(a, b CaseSpread) int { return cmp.Compare(b.MaxRatio, a.MaxRatio) })
-	for _, t := range thresholds {
-		o := ThresholdOutcome{Threshold: t}
+	for _, t := range thresholdsPct {
+		o := ThresholdOutcome{ThresholdPct: t}
 		for _, s := range runs {
 			if slices.ContainsFunc(Compare(s, t), func(r Result) bool { return r.Verdict == Regressed }) {
 				o.FailingRuns++

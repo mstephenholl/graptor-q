@@ -146,10 +146,10 @@ func MinLevel(latest *Version, change APIChange) Level {
 // a breaking change in v0 is released as Minor.
 //
 // Go's rule for major versions 2 and above: the module path must end in
-// /vN, and must not for v0 and v1 (base is the path without the suffix).
+// /vN, and must not for v0 and v1 (modBase is the path without the suffix).
 // Tagging against that rule would publish a version the go command cannot
 // fetch, so it is an error here, reported before merging by the plan check.
-func Next(latest *Version, level Level, modulePath, base string) (Version, error) {
+func Next(latest *Version, level Level, modulePath, modBase string) (Version, error) {
 	var next Version
 	switch {
 	case latest == nil && level == Major:
@@ -163,19 +163,19 @@ func Next(latest *Version, level Level, modulePath, base string) (Version, error
 	default:
 		next = Version{latest.Major, latest.Minor, latest.Patch + 1}
 	}
-	if want := ModuleFor(base, next); modulePath != want {
+	if want := ModuleFor(modBase, next); modulePath != want {
 		return Version{}, fmt.Errorf("go.mod declares module %s, but %s needs module %s", modulePath, next, want)
 	}
 	return next, nil
 }
 
-// ModuleFor returns the module path version v is published under: base
-// for v0 and v1, base/vN from v2 on.
-func ModuleFor(base string, v Version) string {
+// ModuleFor returns the module path version v is published under: modBase
+// for v0 and v1, modBase/vN from v2 on.
+func ModuleFor(modBase string, v Version) string {
 	if v.Major >= 2 {
-		return fmt.Sprintf("%s/v%d", base, v.Major)
+		return fmt.Sprintf("%s/v%d", modBase, v.Major)
 	}
-	return base
+	return modBase
 }
 
 // modulePath returns the module path declared by a go.mod file.

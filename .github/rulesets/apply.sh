@@ -5,17 +5,11 @@
 # are applied with this script by the repository owner (gh authenticated as
 # the owner), and are the record of what is set.
 #
-#   .github/rulesets/apply.sh               # everything as committed
-#   .github/rulesets/apply.sh --without-perf # main without the perf check,
-#                                            # until it is calibrated
-#
 # Rulesets need a public repository on GitHub Free (HTTP 403 while private).
 set -euo pipefail
 
 repo=${REPO:-mstephenholl/graptor-q}
 dir=$(dirname "$0")
-without_perf=false
-[ "${1:-}" = --without-perf ] && without_perf=true
 
 gh label create release:major --repo "$repo" --force --color B60205 \
   --description "Release a new major version; in v0, v1.0.0"
@@ -29,25 +23,27 @@ gh label create perf:accept --repo "$repo" --force --color FBCA04 \
 existing=$(gh api "repos/$repo/rulesets" --jq '.[] | "\(.name)\t\(.id)"')
 
 for f in "$dir"/*.json; do
-  body=$(jq . "$f")
-  if $without_perf; then
-    body=$(jq '(.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks)
-      |= map(select(.context != "perf"))' <<<"$body")
-  fi
-  name=$(jq -r .name <<<"$body")
+  name=$(jq -r .name "$f")
   id=$(awk -F'\t' -v n="$name" '$1 == n { print $2 }' <<<"$existing")
   if [ -n "$id" ]; then
-    gh api -X PUT "repos/$repo/rulesets/$id" --input - <<<"$body" >/dev/null
+    gh api -X PUT "repos/$repo/rulesets/$id" --input "$f" >/dev/null
     echo "updated ruleset $name ($id)"
   else
-    gh api -X POST "repos/$repo/rulesets" --input - <<<"$body" >/dev/null
+    gh api -X POST "repos/$repo/rulesets" --input "$f" >/dev/null
     echo "created ruleset $name"
   fi
 done
 
-# What GitHub stored, to check by eye: the bypass list, and
-# current_user_can_bypass "always" for the owner.
+# What GitHub stored. The owner must be able to bypass every ruleset, or a
+# broken check could lock main.
+status=0
 for id in $(gh api "repos/$repo/rulesets" --jq '.[].id'); do
-  gh api "repos/$repo/rulesets/$id" --jq '{name, enforcement, current_user_can_bypass, bypass_actors,
-    checks: [.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context]}'
+  stored=$(gh api "repos/$repo/rulesets/$id")
+  jq '{name, enforcement, current_user_can_bypass, bypass_actors,
+    checks: [.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context]}' <<<"$stored"
+  if ! jq -e '.current_user_can_bypass == "always" and (.bypass_actors | length) > 0' <<<"$stored" >/dev/null; then
+    echo "apply.sh: ruleset $(jq -r .name <<<"$stored") ($id) needs current_user_can_bypass \"always\" and a non-empty bypass_actors; run it as the repository owner" >&2
+    status=1
+  fi
 done
+exit "$status"

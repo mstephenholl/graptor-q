@@ -2,7 +2,7 @@ package main
 
 import "testing"
 
-const base = "github.com/mstephenholl/graptor-q"
+const modBase = "github.com/mstephenholl/graptor-q"
 
 func v(major, minor, patch int) *Version { return &Version{major, minor, patch} }
 
@@ -13,21 +13,21 @@ func TestNext(t *testing.T) {
 		module string
 		want   string // version or "error"
 	}{
-		{nil, Patch, base, "v0.1.0"}, // the first release
-		{nil, Minor, base, "v0.1.0"},
-		{nil, Major, base, "v1.0.0"},
-		{v(0, 1, 0), Patch, base, "v0.1.1"},
-		{v(0, 1, 7), Minor, base, "v0.2.0"},
-		{v(0, 9, 3), Major, base, "v1.0.0"}, // the compatibility promise
-		{v(1, 4, 2), Minor, base, "v1.5.0"},
-		{v(1, 4, 2), Major, base, "error"},          // v2 needs the /v2 path
-		{v(1, 4, 2), Major, base + "/v2", "v2.0.0"}, // ... which the PR adds
-		{v(1, 4, 2), Patch, base + "/v2", "error"},  // /v2 path without a major bump
-		{v(2, 0, 0), Patch, base + "/v2", "v2.0.1"},
-		{v(2, 0, 0), Major, base + "/v2", "error"}, // v3 needs /v3
-		{v(0, 3, 0), Patch, base + "/v3", "error"},
+		{nil, Patch, modBase, "v0.1.0"}, // the first release
+		{nil, Minor, modBase, "v0.1.0"},
+		{nil, Major, modBase, "v1.0.0"},
+		{v(0, 1, 0), Patch, modBase, "v0.1.1"},
+		{v(0, 1, 7), Minor, modBase, "v0.2.0"},
+		{v(0, 9, 3), Major, modBase, "v1.0.0"}, // the compatibility promise
+		{v(1, 4, 2), Minor, modBase, "v1.5.0"},
+		{v(1, 4, 2), Major, modBase, "error"},          // v2 needs the /v2 path
+		{v(1, 4, 2), Major, modBase + "/v2", "v2.0.0"}, // ... which the PR adds
+		{v(1, 4, 2), Patch, modBase + "/v2", "error"},  // /v2 path without a major bump
+		{v(2, 0, 0), Patch, modBase + "/v2", "v2.0.1"},
+		{v(2, 0, 0), Major, modBase + "/v2", "error"}, // v3 needs /v3
+		{v(0, 3, 0), Patch, modBase + "/v3", "error"},
 	} {
-		got, err := Next(c.latest, c.level, c.module, base)
+		got, err := Next(c.latest, c.level, c.module, modBase)
 		s := got.String()
 		if err != nil {
 			s = "error"
@@ -125,7 +125,7 @@ func TestParseVersion(t *testing.T) {
 
 func TestModulePath(t *testing.T) {
 	got, err := modulePath("// comment\nmodule github.com/mstephenholl/graptor-q/v2\n\ngo 1.24\n")
-	if err != nil || got != base+"/v2" {
+	if err != nil || got != modBase+"/v2" {
 		t.Errorf("modulePath = %q, %v", got, err)
 	}
 }
