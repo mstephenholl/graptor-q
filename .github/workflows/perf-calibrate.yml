@@ -1,0 +1,99 @@
+name: perf-calibrate
+
+# Measures the noise and the sensitivity of the perf check on GitHub's
+# runners, to choose PERF_THRESHOLD in perf.yml before the check becomes
+# required (docs/development.md, "Perf check"). Each parallel run compares
+# base and head on its own runner exactly as perf.yml does, with the
+# BenchmarkGate of the branch this workflow runs on copied onto both commits.
+# It uses the public API and gf256's Tiers, Use and MulAddSlice, which every
+# commit since the first has, so it builds on older commits too.
+#
+# The pairs to run, from docs/development.md:
+#   base = head = main          identical builds: the noise floor
+#   89a9be9^ / 89a9be9          a test added to the root package: a neutral
+#                               change that moves code in the test binary
+#   2882e7c / 2882e7c^          undoes pooling NewPlan's scratch memory, a
+#                               measured 6-16% slowdown of encoding without
+#                               the plan cache: the check must flag it
+#
+# It is also a manual drift check: base = an older release, head = main.
+
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Base commit, tag or branch
+        default: main
+      head:
+        description: Head commit, tag or branch
+        default: main
+
+permissions:
+  contents: read
+
+env:
+  PERF_ROUNDS: "20" # keep equal to perf.yml
+  PERF_BENCHTIME: 200ms
+
+jobs:
+  calibrate-measure:
+    strategy:
+      fail-fast: false
+      matrix:
+        run: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - name: Build base and head with this branch's BenchmarkGate
+        env:
+          GOTOOLCHAIN: local
+          BASE: ${{ inputs.base }}
+          HEAD: ${{ inputs.head }}
+        run: |
+          mkdir -p perf
+          go build -o perf/perfgate ./internal/cmd/perfgate
+          for side in base head; do
+            ref=$BASE
+            [ "$side" = head ] && ref=$HEAD
+            sha=$(git rev-parse --verify --quiet "$ref^{commit}" || git rev-parse --verify "origin/$ref^{commit}")
+            echo "$side: $ref = $sha"
+            echo "${side}_sha=$sha" >> "$GITHUB_ENV"
+            dir=$RUNNER_TEMP/$side
+            git worktree add --detach "$dir" "$sha"
+            # Commits before the rename have another module path.
+            mod=$(sed -n 's/^module //p' "$dir/go.mod")
+            sed "s#github.com/mstephenholl/graptor-q#$mod#g" gate_bench_test.go > "$dir/gate_bench_test.go"
+            (cd "$dir" && go test -c -trimpath -o "$GITHUB_WORKSPACE/perf/$side.test" .)
+          done
+      - name: Measure
+        run: |
+          perf/perfgate run -base perf/base.test -head perf/head.test \
+            -base-label "${base_sha::7}" -head-label "${head_sha::7}" \
+            -rounds "$PERF_ROUNDS" -benchtime "$PERF_BENCHTIME" -cpu 1 \
+            -o "perf/samples-${{ matrix.run }}.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: samples-${{ matrix.run }}
+          path: perf/samples-${{ matrix.run }}.json
+
+  calibrate-summary:
+    needs: calibrate-measure
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: samples-*
+          merge-multiple: true
+          path: samples
+      - run: go run ./internal/cmd/perfgate calibrate samples/*.json >> "$GITHUB_STEP_SUMMARY"
