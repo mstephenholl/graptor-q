@@ -8,10 +8,10 @@ import (
 
 func TestMedianInterval(t *testing.T) {
 	for _, c := range []struct{ n, lo, hi int }{
-		{6, 0, 5},   // too few rounds to exclude any: the whole range
-		{10, 1, 8},  // [x(2), x(9)]: 97.9%
-		{20, 5, 14}, // [x(6), x(15)]: 95.9%
-		{30, 9, 20}, // [x(10), x(21)]: 95.7%
+		{6, 0, 5},
+		{10, 1, 8},
+		{20, 5, 14},
+		{30, 9, 20},
 	} {
 		if lo, hi := medianInterval(c.n); lo != c.lo || hi != c.hi {
 			t.Errorf("medianInterval(%d) = %d, %d; want %d, %d", c.n, lo, hi, c.lo, c.hi)
@@ -38,21 +38,16 @@ func repeat(r float64, n int) []float64 {
 }
 
 func TestCompare(t *testing.T) {
-	// 10% slower in every round.
 	if r := Compare(samples(repeat(1.10, 20)...), 5)[0]; r.Verdict != Regressed || math.Abs(r.Ratio-1.10) > 1e-9 {
 		t.Errorf("uniform 10%% slowdown: %+v", r)
 	}
-	// 10% slower in 14 rounds and faster in 6: the median is above the
-	// threshold but the interval reaches below zero.
 	mixed := append(repeat(1.10, 14), repeat(0.97, 6)...)
 	if r := Compare(samples(mixed...), 5)[0]; r.Verdict != Same {
 		t.Errorf("14 of 20 slower: %+v", r)
 	}
-	// 3% slower every round: significant, but under the threshold.
 	if r := Compare(samples(repeat(1.03, 20)...), 5)[0]; r.Verdict != Same {
 		t.Errorf("uniform 3%% slowdown: %+v", r)
 	}
-	// One wild round does not move the median.
 	wild := append(repeat(1.0, 19), 3.0)
 	if r := Compare(samples(wild...), 5)[0]; r.Verdict != Same || r.Ratio != 1 {
 		t.Errorf("one outlier: %+v", r)

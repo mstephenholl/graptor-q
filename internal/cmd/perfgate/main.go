@@ -3,18 +3,12 @@
 // (.github/workflows/perf.yml).
 //
 //	perfgate run -base base.test -head head.test -o samples.json
-//	perfgate verdict samples.json         # exit 1 on a regression
+//	perfgate verdict samples.json
 //	perfgate calibrate samples-1.json samples-2.json ...
 //
-// run executes the two test binaries alternately, one process per case and
-// side, for the given number of rounds, swapping which side goes first every
-// round. Pairing each case's two runs of a round cancels the slow changes of
-// a shared runner (other tenants, frequency); swapping the order cancels
-// what running second does. verdict and calibrate only read samples, so a
-// verdict can be recomputed without measuring again.
-//
-// perfgate knows nothing about Git or GitHub: the workflow builds the
-// binaries and decides about overrides.
+// run alternates the two binaries, one process per case and side, and swaps
+// which side goes first every round: pairing a round's two runs cancels the
+// drift of a shared runner, and swapping cancels the cost of running second.
 package main
 
 import (
@@ -35,16 +29,16 @@ import (
 )
 
 // Samples is the output of run and the input of verdict and calibrate.
-// NsPerOp[case][side][round] for side 0 (base) and 1 (head); a case is kept
-// only if both sides reported it in every round.
+// NsPerOp[case][side][round] has side 0 for the base and 1 for the head, for
+// the cases both sides have.
 type Samples struct {
-	Base, Head string // labels, such as commit hashes
-	CPU        string // the "cpu:" line of the benchmark output
+	Base, Head string
+	CPU        string
 	Rounds     int
 	Benchtime  string
 	NsPerOp    map[string][2][]float64
-	OnlyBase   []string `json:",omitempty"` // cases the head no longer has
-	OnlyHead   []string `json:",omitempty"` // cases new in the head
+	OnlyBase   []string `json:",omitempty"`
+	OnlyHead   []string `json:",omitempty"`
 }
 
 func main() {
@@ -71,8 +65,8 @@ func main() {
 	}
 }
 
-// Exit statuses. perf.yml lets the perf:accept label override exit status 1
-// only, so that a failed measurement can never be accepted as a regression.
+// Exit statuses. perf.yml lets the perf:accept label override status 1 only,
+// so that a failed measurement is never accepted as a regression.
 const (
 	exitRegression = 1
 	exitError      = 2
@@ -83,7 +77,6 @@ func usage() {
 	os.Exit(exitError)
 }
 
-// errRegression is returned by verdict when a case regressed.
 var errRegression = errors.New("performance regression")
 
 func cmdRun(args []string) error {
@@ -105,8 +98,6 @@ func cmdRun(args []string) error {
 	}
 	bins := [2]string{*base, *head}
 
-	// Discover the cases with one iteration of each, which also warms the
-	// page cache with both binaries.
 	var names [2][]string
 	var cpuLine string
 	for side, bin := range bins {
@@ -157,7 +148,8 @@ func cmdRun(args []string) error {
 	return os.WriteFile(*out, b, 0o644)
 }
 
-// runBench runs one test binary and returns ns/op by benchmark name.
+// runBench runs one test binary and returns ns/op by benchmark name, and
+// the cpu line.
 func runBench(bin, pattern, benchtime string, cpu int) (map[string]float64, string, error) {
 	argv := []string{bin, "-test.run", "^$", "-test.bench", pattern, "-test.benchtime", benchtime,
 		"-test.count", "1", "-test.cpu", "1"}
@@ -173,9 +165,8 @@ func runBench(bin, pattern, benchtime string, cpu int) (map[string]float64, stri
 	return parseBench(&stdout)
 }
 
-// benchLine matches a result line such as
-// "BenchmarkGate/op=encode/K=100/T=1280   5016   47935 ns/op   2670.28 MB/s".
-// With -test.cpu 1 the name has no -N suffix.
+// benchLine matches a result line. With -test.cpu 1 the benchmark name has
+// no -N suffix.
 var benchLine = regexp.MustCompile(`^(Benchmark\S+)\s+\d+\s+([0-9.e+]+) ns/op`)
 
 func parseBench(r io.Reader) (map[string]float64, string, error) {
@@ -201,9 +192,8 @@ func parseBench(r io.Reader) (map[string]float64, string, error) {
 }
 
 // exactPattern returns the -test.bench pattern selecting exactly the named
-// benchmark. The go test pattern is split at slashes and each element is
-// matched, unanchored, against one level of the name, so every level is
-// quoted and anchored ("K=100" alone would also select K=1000).
+// benchmark. -test.bench splits at slashes and matches each level unanchored,
+// so each level is quoted and anchored: "K=100" alone also selects K=1000.
 func exactPattern(name string) string {
 	levels := strings.Split(name, "/")
 	for i, l := range levels {

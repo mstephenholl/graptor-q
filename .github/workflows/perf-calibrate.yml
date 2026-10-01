@@ -1,22 +1,9 @@
 name: perf-calibrate
 
-# Measures the noise and the sensitivity of the perf check on GitHub's
-# runners, to choose perfgate's -threshold default before the check becomes
-# required (docs/development.md, "Perf check"). Each parallel run compares
-# base and head on its own runner exactly as perf.yml does, with the
-# BenchmarkGate of the branch this workflow runs on copied onto both commits.
-# It uses the public API and gf256's Tiers, Use and MulAddSlice, which every
-# commit since the first has, so it builds on older commits too.
-#
-# The pairs to run, from docs/development.md:
-#   base = head = main          identical builds: the noise floor
-#   89a9be9^ / 89a9be9          a test added to the root package: a neutral
-#                               change that moves code in the test binary
-#   2882e7c / 2882e7c^          undoes pooling NewPlan's scratch memory, a
-#                               measured 6-16% slowdown of encoding without
-#                               the plan cache: the check must flag it
-#
-# It is also a manual drift check: base = an older release, head = main.
+# Gates nothing: measures the perf check's noise and sensitivity on 10
+# runners, with this branch's BenchmarkGate copied onto both commits, to
+# choose perfgate's -threshold default. The pairs to run are in
+# docs/development.md, "Calibration".
 
 on:
   workflow_dispatch:
@@ -62,7 +49,6 @@ jobs:
             echo "${side}_sha=$sha" >> "$GITHUB_ENV"
             dir=$RUNNER_TEMP/$side
             git worktree add --detach "$dir" "$sha"
-            # Commits before the rename have another module path.
             mod=$(sed -n 's/^module //p' "$dir/go.mod")
             sed "s#github.com/mstephenholl/graptor-q#$mod#g" gate_bench_test.go > "$dir/gate_bench_test.go"
             (cd "$dir" && go test -c -trimpath -o "$GITHUB_WORKSPACE/perf/$side.test" .)

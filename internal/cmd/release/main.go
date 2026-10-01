@@ -1,34 +1,20 @@
 // Command release tags a commit of main with the next semantic version and
 // creates its GitHub release (the release job of .github/workflows/ci.yml),
-// or, with -plan-pr, reports the version that merging a pull request would
-// release (.github/workflows/release-plan.yml).
+// or, with -plan-pr, reports what merging a pull request would release
+// (.github/workflows/release-plan.yml).
 //
-//	release -commit $GITHUB_SHA                         # after CI passed on main
-//	release -commit HEAD -plan-pr 12 -apidiff apidiff   # in a pull request's merge commit
+//	release -commit $GITHUB_SHA
+//	release -commit HEAD -plan-pr 12 -apidiff apidiff
 //
-// The release level of each commit is the release:major, release:minor or
-// release:patch label of the pull request GitHub merged it from (patch
-// without a label, or for a commit pushed directly). A release covers every
-// commit since the previous release tag and takes the highest level among
-// them, so a release that never ran (a cancelled job, a failed CI run) is
-// folded into the next one without losing a breaking change.
+// A release covers every commit since the previous release tag, at the
+// highest release label among their pull requests (patch without one), so a
+// release that never ran is folded into the next without losing a breaking
+// change. The plan also fails when apidiff finds an incompatible change below
+// the level it needs, so a forgotten label cannot release it as a patch.
 //
-// The plan also compares the exported API of the merge commit's first
-// parent (the base branch) and the merge commit with apidiff
-// (golang.org/x/exp/cmd/apidiff), and fails when it reports incompatible
-// changes but the pull request's level is below minor in v0, or below
-// major from v1 on, so that a forgotten label cannot release a breaking
-// change as a patch.
-//
-// The tags are the only state. Running release again for the same commit, or
-// for a commit an existing release already contains, changes nothing, and a
-// run that stopped between creating the tag and the release finishes the
-// release. Tags are created with the Git refs API, which fails if the tag
-// exists, so two runs can never give one version to two commits.
-//
-// It runs git in the current repository and gh with GH_TOKEN, and reads
-// GITHUB_REPOSITORY. With GITHUB_OUTPUT set, a run that leaves the commit
-// released writes the outputs tag and module.
+// The tags are the only state: running release again finishes an interrupted
+// release and otherwise changes nothing. It reads GITHUB_REPOSITORY, runs gh
+// with GH_TOKEN, and writes the outputs tag and module to GITHUB_OUTPUT.
 package main
 
 import (
@@ -77,7 +63,7 @@ func main() {
 
 type releaser struct {
 	repo    string // owner/name
-	modBase string // module path without a /vN suffix
+	modBase string // module path without the /vN suffix
 }
 
 type tag struct {
@@ -102,7 +88,6 @@ func (r *releaser) release(sha string) error {
 	if err != nil {
 		return err
 	}
-	// Already tagged (a re-run, or a run that stopped before the release).
 	for _, t := range slices.Backward(tags) {
 		if t.commit == sha {
 			log.Printf("%s is already tagged %s", sha, t.v)
@@ -148,7 +133,6 @@ func (r *releaser) plan(sha string, pr int, apidiff string) error {
 	if len(tags) > 0 {
 		latest = &tags[len(tags)-1]
 	}
-	// Commits already on main but not yet released, then this pull request.
 	mainTip, err := git("rev-parse", sha+"^1")
 	if err != nil {
 		return err
@@ -211,7 +195,7 @@ func (r *releaser) levelSince(latest *tag, sha string) (Level, string, error) {
 			return 0, "", err
 		}
 		if pr == 0 {
-			continue // pushed directly: patch
+			continue
 		}
 		l, err := LevelFromLabels(labels)
 		if err != nil {
@@ -225,9 +209,8 @@ func (r *releaser) levelSince(latest *tag, sha string) (Level, string, error) {
 }
 
 // mergedFrom returns the pull request that commit c of main was merged from
-// (0 when it was pushed directly) and that pull request's current labels.
-// Only a pull request whose merge commit is c counts: the API also lists
-// open pull requests that contain c.
+// (0 when it was pushed directly) and its current labels. The API also lists
+// open pull requests that contain c, so only a merge commit of c counts.
 func (r *releaser) mergedFrom(c string) (int, []string, error) {
 	out, err := gh("api", fmt.Sprintf("repos/%s/commits/%s/pulls", r.repo, c), "--jq",
 		fmt.Sprintf(`.[] | select(.merge_commit_sha == "%s") | "\(.number) \([.labels[].name] | join(","))"`, c))
@@ -239,8 +222,9 @@ func (r *releaser) mergedFrom(c string) (int, []string, error) {
 	return n, splitNonEmpty(labels), err
 }
 
+// prLabels reads the labels live: a re-run replays the original event
+// payload.
 func (r *releaser) prLabels(pr int) ([]string, error) {
-	// Read now, not from the event: a re-run reuses the original event.
 	out, err := gh("api", fmt.Sprintf("repos/%s/pulls/%d", r.repo, pr), "--jq", `[.labels[].name] | join(",")`)
 	if err != nil {
 		return nil, err
@@ -289,9 +273,8 @@ func apiChange(apidiff, base, head string) (APIChange, string, error) {
 	return change, report, err
 }
 
-// apidiffAt extracts the tree of commit c into dir, so the working tree
-// does not matter, and runs apidiff there with args and the module path
-// of c.
+// apidiffAt runs apidiff with args and the module path of commit c on c's
+// tree, extracted into dir, so the working tree does not matter.
 func apidiffAt(apidiff, c, dir string, args ...string) (string, error) {
 	path, err := moduleAt(c)
 	if err != nil {
@@ -317,8 +300,7 @@ func (r *releaser) createTag(t tag) error {
 	if err == nil {
 		return nil
 	}
-	// It may exist from a concurrent or interrupted run: fine only if it
-	// points at the same commit.
+	// An interrupted or concurrent run may have created it.
 	got, lerr := git("ls-remote", "origin", "refs/tags/"+t.v.String())
 	if lerr == nil && strings.HasPrefix(got, t.commit) {
 		return nil

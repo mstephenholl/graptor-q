@@ -33,6 +33,7 @@ func ParseVersion(tag string) (Version, bool) {
 
 func (v Version) String() string { return fmt.Sprintf("v%d.%d.%d", v.Major, v.Minor, v.Patch) }
 
+// Less reports whether v sorts before w.
 func (v Version) Less(w Version) bool {
 	if v.Major != w.Major {
 		return v.Major < w.Major
@@ -46,6 +47,7 @@ func (v Version) Less(w Version) bool {
 // Level is the part of the version a change increments.
 type Level int
 
+// Levels, in increasing order.
 const (
 	Patch Level = iota
 	Minor
@@ -56,10 +58,9 @@ func (l Level) String() string { return [...]string{"patch", "minor", "major"}[l
 
 const labelPrefix = "release:"
 
-// LevelFromLabels returns the level a pull request's labels ask for: Patch
-// when no release label is present. More than one release label, or an
-// unknown one, is an error rather than a guess, because a version cannot be
-// taken back once the module proxy has served it.
+// LevelFromLabels returns the level a pull request's labels ask for, Patch
+// without a release label. Two release labels or an unknown one are an error,
+// not a guess: the module proxy keeps a version once it has served it.
 func LevelFromLabels(labels []string) (Level, error) {
 	level, found := Patch, ""
 	for _, l := range labels {
@@ -89,6 +90,7 @@ func LevelFromLabels(labels []string) (Level, error) {
 // commits, as golang.org/x/exp/cmd/apidiff reports it.
 type APIChange int
 
+// API changes, in increasing order.
 const (
 	APIUnchanged APIChange = iota
 	APIFeature             // compatible changes only, such as additions
@@ -97,11 +99,9 @@ const (
 
 func (c APIChange) String() string { return [...]string{"unchanged", "feature", "breaking"}[c] }
 
-// ParseAPIDiff classifies the text report of apidiff -m: a section headed
-// "Incompatible changes:" is breaking, one headed "Compatible changes:" is
-// a feature, and no output is no change. Any other line is an error, so
-// that a format this parser does not know cannot let an incompatible
-// change through as a patch.
+// ParseAPIDiff classifies the text report of apidiff -m by its "Incompatible
+// changes:" and "Compatible changes:" sections. Any other line is an error,
+// so that an unknown format cannot let an incompatible change through.
 func ParseAPIDiff(report string) (APIChange, error) {
 	report = strings.TrimSpace(report)
 	if report == "" {
@@ -124,9 +124,9 @@ func ParseAPIDiff(report string) (APIChange, error) {
 }
 
 // MinLevel returns the lowest level a pull request with the given API
-// change may be released at, after latest (nil before the first release).
-// An incompatible change needs Minor in v0, where Go promises no
-// compatibility, and Major from v1 on.
+// change may be released at, after latest (nil before the first release):
+// Minor for an incompatible change in v0, where Go promises nothing, Major
+// from v1 on.
 func MinLevel(latest *Version, change APIChange) Level {
 	switch {
 	case change != APIBreaking:
@@ -137,18 +137,10 @@ func MinLevel(latest *Version, change APIChange) Level {
 	return Major
 }
 
-// Next returns the version that follows latest (nil before the first
-// release) for changes of the given level, and checks it against the module
-// path declared in go.mod at the commit to be tagged.
-//
-// The first release is v0.1.0 (v1.0.0 for Major). In v0, Major is the
-// decision to promise compatibility and moves to v1.0.0; by Go's convention
-// a breaking change in v0 is released as Minor.
-//
-// Go's rule for major versions 2 and above: the module path must end in
-// /vN, and must not for v0 and v1 (modBase is the path without the suffix).
-// Tagging against that rule would publish a version the go command cannot
-// fetch, so it is an error here, reported before merging by the plan check.
+// Next returns the version after latest (nil before the first release) for
+// a change of the given level: v0.1.0 first, and v1.0.0 for Major in v0. It
+// fails when modulePath breaks Go's /vN rule for that version, which the go
+// command could not fetch; modBase is the module path without /vN.
 func Next(latest *Version, level Level, modulePath, modBase string) (Version, error) {
 	var next Version
 	switch {

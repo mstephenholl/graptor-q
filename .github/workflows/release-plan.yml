@@ -1,17 +1,9 @@
 name: release-plan
 
-# Shows, in the job summary, the version that merging the pull request will
-# release, and fails where the release job would refuse after the merge: two
-# release labels, an unknown one, or a major version that does not match the
-# module path in go.mod (Go's /vN rule). It also fails when apidiff reports
-# incompatible changes to the exported API between the base branch and the
-# merge, and the level is below minor in v0 or below major from v1 on. A
-# required check, re-run on every label change so that it never reports a
-# stale level.
-#
-# Release levels are labels: release:major, release:minor, release:patch
-# (the default). In v0 a breaking change is release:minor; release:major on
-# v0 releases v1.0.0.
+# Gates pull requests on their release label: fails where the release job
+# would refuse after the merge, or when apidiff finds an incompatible API
+# change below release:minor in v0 or release:major from v1 on. Re-runs on
+# every label change, so changing the label is the fix.
 
 on:
   pull_request:
@@ -31,11 +23,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0 # tags, and main's unreleased commits
+          fetch-depth: 0
       - uses: actions/setup-go@v7
         with:
           go-version: stable
-      # Installed outside the module, so go.mod gains no requirement.
       - name: Install apidiff
         run: GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/exp/cmd/apidiff@v0.0.0-20260908205506-85c1c2202aba
       - env:

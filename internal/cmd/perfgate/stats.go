@@ -9,6 +9,7 @@ import (
 // Verdict is the outcome for one case.
 type Verdict string
 
+// Verdicts, as the job summary shows them.
 const (
 	Regressed Verdict = "**slower**"
 	Improved  Verdict = "faster"
@@ -21,22 +22,15 @@ type Result struct {
 	Name    string
 	Ratio   float64 // exp of the median per-round log ratio
 	Lo, Hi  float64 // distribution-free 95% interval of that median
-	Slower  int     // rounds in which the head was slower
+	Slower  int
 	Rounds  int
 	Verdict Verdict
 }
 
 // Compare returns one Result per case, slowest head first. A case regresses
-// when both hold:
-//   - its median ratio exceeds 1+thresholdPct/100 (the slowdown matters), and
-//   - the low end of the 95% interval of the median is above 1 (it is not
-//     noise: the head was slower in clearly more than half of the rounds).
-//
-// The per-round ratio pairs the two runs that ran next to each other, so
-// that changes of the machine's speed over the minutes of a run cancel. The
-// median and its order-statistic interval (the sign test's) assume nothing
-// about the distribution, and one disturbed round moves them by at most one
-// position.
+// when its median ratio exceeds 1+thresholdPct/100 and its 95% interval lies
+// above 1. Each ratio pairs a round's two adjacent runs, so the machine's
+// drift cancels, and one disturbed round moves the median by one position.
 func Compare(s *Samples, thresholdPct float64) []Result {
 	limit := 1 + thresholdPct/100
 	var out []Result
@@ -81,11 +75,9 @@ func median(sorted []float64) float64 {
 }
 
 // medianInterval returns the 0-based indexes (lo, hi) into n sorted values
-// of the narrowest order-statistic interval for the median with at least 95%
-// coverage: the largest k with P(Binomial(n, 1/2) < k) <= 2.5% gives
-// [x(k), x(n+1-k)] (1-based). For n = 20 that is [x(6), x(15)], with 95.9%
-// coverage; its low end is above zero when the head was slower in at least
-// 15 of the 20 rounds.
+// of the narrowest order-statistic interval with at least 95% coverage of
+// the median (the sign test's). For n = 20 it is [x(6), x(15)], 1-based, so
+// its low end is above zero when the head was slower in at least 15 of 20 rounds.
 func medianInterval(n int) (lo, hi int) {
 	k := 0
 	cum := 0.0 // P(Binomial(n, 1/2) <= k-1)
@@ -97,9 +89,8 @@ func medianInterval(n int) (lo, hi int) {
 		cum += p
 		k++
 	}
-	// k is now the largest count with P(X < k) <= 2.5%, as 1-based x(k).
 	if k == 0 {
-		return 0, n - 1 // too few rounds for 95%: the whole range
+		return 0, n - 1 // too few rounds for 95%
 	}
 	return k - 1, n - k
 }
@@ -116,23 +107,29 @@ func binom(n, k int) float64 {
 // two builds that should be equally fast, to choose the threshold.
 type Calibration struct {
 	Runs       int
-	CPUs       []string // distinct runner CPUs: hosted runners vary
+	CPUs       []string
 	Cases      []CaseSpread
 	Thresholds []ThresholdOutcome
 }
 
+// CaseSpread summarizes one case's Results over the runs: the median and the
+// largest Ratio, and the largest Lo.
 type CaseSpread struct {
 	Name        string
-	MedianRatio float64 // median over runs of the run's median ratio
-	MaxRatio    float64 // largest median ratio of any run
-	MaxLo       float64 // largest low end of the interval of any run
+	MedianRatio float64
+	MaxRatio    float64
+	MaxLo       float64
 }
 
+// ThresholdOutcome counts the runs in which at least one case would regress
+// at ThresholdPct.
 type ThresholdOutcome struct {
 	ThresholdPct float64
-	FailingRuns  int // runs in which at least one case would regress
+	FailingRuns  int
 }
 
+// Calibrate summarizes runs, and counts the failing runs at each threshold,
+// in percent.
 func Calibrate(runs []*Samples, thresholdsPct []float64) Calibration {
 	c := Calibration{Runs: len(runs)}
 	byCase := map[string][]Result{}

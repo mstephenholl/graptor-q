@@ -1,17 +1,9 @@
 name: perf
 
-# Fails a pull request that makes the library slower. Both builds run on the
-# same runner, alternating case by case (internal/cmd/perfgate), so the
-# runner's CPU model and its neighbours affect both sides alike; a stored
-# baseline from another runner would compare different machines.
-#
-# The suite is BenchmarkGate (gate_bench_test.go). The threshold is
-# perfgate's -threshold default, calibrated with perf-calibrate.yml; see
-# docs/development.md, "Perf check".
-#
-# To accept a regression: add the label perf:accept (it counts only when the
-# repository owner adds it), then re-run the failed jobs. Only the perf job
-# runs again, on the measurements already taken.
+# Fails a pull request that makes BenchmarkGate slower, running the base and
+# head builds alternately on one runner (internal/cmd/perfgate). To accept a
+# regression, the repository owner adds the label perf:accept and re-runs the
+# failed jobs, which repeats only the comparison.
 
 on:
   pull_request:
@@ -30,8 +22,8 @@ jobs:
     outputs:
       skip: ${{ steps.build.outputs.skip }}
     steps:
-      # The merge commit, and its first parent: the tip of the base branch
-      # the pull request would be squashed onto.
+      # On pull_request, checkout gives the merge commit; its first parent
+      # (HEAD^1) is the tip of the base branch.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 2
@@ -41,15 +33,10 @@ jobs:
       - id: build
         name: Build base and head
         env:
-          # The same compiler for both sides, whatever their go.mod asks.
           GOTOOLCHAIN: local
         run: |
           mkdir -p perf
           git worktree add --detach "$RUNNER_TEMP/base" HEAD^1
-          # -trimpath keeps the two directories out of the binaries. When
-          # they are identical nothing the suite measures changed, and
-          # measuring could only add noise. Moving a line of compiled Go,
-          # even with a comment, changes the line tables and is measured.
           (cd "$RUNNER_TEMP/base" && go test -c -trimpath -o "$GITHUB_WORKSPACE/perf/base.test" .)
           go test -c -trimpath -o perf/head.test .
           if cmp -s perf/base.test perf/head.test; then
@@ -64,6 +51,8 @@ jobs:
             -cpu 1 -o perf/samples.json
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      # upload-artifact v4+ rejects a second upload under the same name, so a
+      # re-run of all jobs needs overwrite.
       - if: steps.build.outputs.skip != 'true'
         uses: actions/upload-artifact@v7
         with:
@@ -72,18 +61,17 @@ jobs:
             perf/samples.json
             perf/perfgate
           retention-days: 30
-          overwrite: true # "re-run all jobs" uploads again under the same name
+          overwrite: true
 
-  # The required check. Separate from measure so that an override needs only
-  # this job re-run. It must report failure, never skipped, when measuring
-  # failed: a skipped required check counts as passing.
+  # Runs even when measure failed, to fail itself: GitHub counts a required
+  # check that is skipped as passing.
   perf:
     needs: measure
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      issues: read # the label events of the pull request
+      issues: read # the label events of a pull request are issue events
       pull-requests: read
     steps:
       - name: Require the measurement
@@ -107,8 +95,7 @@ jobs:
           OWNER: ${{ github.repository_owner }}
         run: |
           chmod +x perf/perfgate
-          # Labels and their events are read now, not from the event payload,
-          # which a re-run reuses unchanged.
+          # Read live: a re-run replays the original event payload.
           accepted_by=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/events" \
             --jq '.[] | select(.event == "labeled" and .label.name == "perf:accept") | .actor.login' | tail -n 1)
           has_label=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/labels" --jq '.[].name' | grep -cx 'perf:accept' || true)

@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
-# Creates the labels the workflows read, and creates or updates the
-# repository rulesets from the JSON files next to this script, matching them
-# by name, so it is safe to run again. GitHub does not read these files: they
-# are applied with this script by the repository owner (gh authenticated as
-# the owner), and are the record of what is set.
-#
-# Rulesets need a public repository on GitHub Free (HTTP 403 while private).
+# Creates the labels the workflows read and creates or updates each ruleset
+# in this directory, matched by name. GitHub does not read these files; run
+# this as the repository owner. Rulesets need a public repository on GitHub
+# Free (HTTP 403 while private).
 set -euo pipefail
 
 repo=${REPO:-mstephenholl/graptor-q}
@@ -34,8 +31,7 @@ for f in "$dir"/*.json; do
   fi
 done
 
-# What GitHub stored. The owner must be able to bypass every ruleset, or a
-# broken check could lock main.
+# A broken required check would lock main for anyone who cannot bypass it.
 status=0
 for id in $(gh api "repos/$repo/rulesets" --jq '.[].id'); do
   stored=$(gh api "repos/$repo/rulesets/$id")

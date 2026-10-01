@@ -11,20 +11,20 @@ func TestNext(t *testing.T) {
 		latest *Version
 		level  Level
 		module string
-		want   string // version or "error"
+		want   string
 	}{
-		{nil, Patch, modBase, "v0.1.0"}, // the first release
+		{nil, Patch, modBase, "v0.1.0"},
 		{nil, Minor, modBase, "v0.1.0"},
 		{nil, Major, modBase, "v1.0.0"},
 		{v(0, 1, 0), Patch, modBase, "v0.1.1"},
 		{v(0, 1, 7), Minor, modBase, "v0.2.0"},
-		{v(0, 9, 3), Major, modBase, "v1.0.0"}, // the compatibility promise
+		{v(0, 9, 3), Major, modBase, "v1.0.0"},
 		{v(1, 4, 2), Minor, modBase, "v1.5.0"},
-		{v(1, 4, 2), Major, modBase, "error"},          // v2 needs the /v2 path
-		{v(1, 4, 2), Major, modBase + "/v2", "v2.0.0"}, // ... which the PR adds
-		{v(1, 4, 2), Patch, modBase + "/v2", "error"},  // /v2 path without a major bump
+		{v(1, 4, 2), Major, modBase, "error"},
+		{v(1, 4, 2), Major, modBase + "/v2", "v2.0.0"},
+		{v(1, 4, 2), Patch, modBase + "/v2", "error"},
 		{v(2, 0, 0), Patch, modBase + "/v2", "v2.0.1"},
-		{v(2, 0, 0), Major, modBase + "/v2", "error"}, // v3 needs /v3
+		{v(2, 0, 0), Major, modBase + "/v2", "error"},
 		{v(0, 3, 0), Patch, modBase + "/v3", "error"},
 	} {
 		got, err := Next(c.latest, c.level, c.module, modBase)
@@ -61,7 +61,7 @@ func TestLevelFromLabels(t *testing.T) {
 func TestParseAPIDiff(t *testing.T) {
 	for _, c := range []struct {
 		report string
-		want   string // change or "error"
+		want   string
 	}{
 		{"", "unchanged"},
 		{"\n", "unchanged"},
@@ -69,9 +69,9 @@ func TestParseAPIDiff(t *testing.T) {
 		{"Incompatible changes:\n- B: changed from func(int) to func(string)\n" +
 			"Compatible changes:\n- C: added\n- package example.com/m/newpkg: added\n", "breaking"},
 		{"Incompatible changes:\n- package example.com/m/sub: removed\n", "breaking"},
-		{"- C: added\n", "error"},                      // an entry without a section
-		{"Additions:\n- C: added\n", "error"},          // a section this parser does not know
-		{"Compatible changes:\n  C: added\n", "error"}, // an entry in another format
+		{"- C: added\n", "error"},
+		{"Additions:\n- C: added\n", "error"},
+		{"Compatible changes:\n  C: added\n", "error"},
 		{"loading example.com/m: m.go:3:12: expected ';'\n", "error"},
 	} {
 		got, err := ParseAPIDiff(c.report)

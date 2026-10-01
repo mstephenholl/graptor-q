@@ -1,22 +1,21 @@
 name: ci
 
+# Gates pull requests through the ci job, which the main ruleset requires,
+# and releases each commit of main that passes. To release without a merge,
+# dispatch it on main: a re-run replays the original event, so a run from
+# before the repository went public still sees it private.
+
 on:
   push:
     branches: [main]
   pull_request:
-  # Runs CI and the release on main by hand, for a release without a new
-  # merge. The first release after the repository goes public needs it: a
-  # re-run reuses its original event, which says the repository is private.
   workflow_dispatch:
 
-# Every job reads only, except release, which asks for more itself.
 permissions:
   contents: read
 
-# A new push to a pull request supersedes its running CI. Runs on main get a
-# group of their own per commit: a shared group would cancel a pending run
-# when a third arrives, even without cancel-in-progress, and every commit of
-# main must be tested before it can be released.
+# One group per commit of main: in a shared group, GitHub cancels a pending
+# run when a newer one queues, even without cancel-in-progress.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -91,10 +90,8 @@ jobs:
       # The committed golden vectors must be exactly what the oracle generates.
       - run: make oracle-vectors ORACLE=docker && git diff --exit-code testdata/vectors
 
-  # The check the main ruleset requires for CI (see .github/rulesets/main.json).
-  # The list of jobs lives here only, so adding, renaming or re-matrixing a
-  # job needs no ruleset change. It runs even when a job failed and then
-  # fails itself: a required check that is skipped counts as passing.
+  # Runs even when a job failed, to fail itself: GitHub counts a required
+  # check that is skipped as passing.
   ci:
     if: ${{ !cancelled() }}
     needs: [test, lint, cross, arm64-native, interop]
@@ -109,30 +106,24 @@ jobs:
             [ "$r" = success ] || exit 1
           done
 
-  # Tags the commit with the next version and creates its GitHub release
-  # (internal/cmd/release). It needs ci, so it runs only after every job
-  # passed on this commit of main. Re-running it, or running it for a commit
-  # an existing release already contains, changes nothing.
-  #
-  # Releases wait until the repository is public: the module proxy cannot
-  # fetch a private module, and pkg.go.dev keeps each version's README.
+  # Waits for a public repository: the module proxy cannot fetch a private
+  # module, and pkg.go.dev keeps each version's README.
   release:
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && !github.event.repository.private
     needs: ci
     runs-on: ubuntu-latest
     permissions:
-      contents: write # create the tag and the release
-      pull-requests: read # read the release labels of merged pull requests
-    # One release at a time, never cancelling a running one. GitHub keeps
-    # only the newest pending job of a group, so a burst of merges can skip
-    # one; the next release then covers its commits and its label.
+      contents: write
+      pull-requests: read
+    # GitHub keeps only the newest pending job of a group; a skipped release
+    # is folded into the next one.
     concurrency:
       group: release
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0 # all tags and the history since the last one
+          fetch-depth: 0
       - uses: actions/setup-go@v7
         with:
           go-version: stable
@@ -141,7 +132,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: go run ./internal/cmd/release -commit "$GITHUB_SHA"
       # Makes the version visible on pkg.go.dev without waiting for a user
-      # to fetch it. Best effort: the tag is the release.
+      # to fetch it.
       - name: Fetch the version through the Go module proxy
         if: steps.release.outputs.tag != ''
         continue-on-error: true
