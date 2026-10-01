@@ -35,7 +35,7 @@ Decoding K = 10,000, T = 1280 with 10% loss (about 18.7 ms) breaks down as:
 - **Wider fused kernels.** A multi-source multiply-add for the HDPC phase-2 operations, and an AVX-512 tier on CPUs that have it.
 - **Faster plan construction.** Every decode builds a plan (about 21% of decode time at K = 10,000), and so does an encoder without the plan cache. Construction is already 2–3.7× faster than cberner's (its `SourceBlockEncodingPlan::generate`), and pooling the scratch memory of `NewPlan` took another 11–15% off. Expanding the pivot bitsets of the HDPC recurrence in registers (`gf256.HDPCStepBits`, AVX2) took 10% off at large K', and keeping phase 1's chosen flag in the V-degree array about 1%; together they make decoding K = 50,000, T = 256 6% faster. What remains (phase 1, the forward substitution of the pivot bitsets, plan assembly, row building) has no single hot spot: the time is spread over scattered memory accesses.
 - **Parallel plan construction.** Relevant for multi-core decoders of large blocks, where plan construction is serial but execution already runs in parallel stripes.
-- **Native arm64 profiling.** NEON correctness is verified under qemu, but its performance has never been measured.
+- **Native arm64 profiling.** CI runs the tests natively on GitHub's arm64 runners and measures the NEON kernels there (multiply-add about 15 GB/s at 1280 bytes), but codec performance on arm64 has not been profiled.
 
 ### Already measured and rejected
 
@@ -71,5 +71,5 @@ by memory bandwidth. EVEX-encoded GFNI on 512-bit registers comes for free.
 
 ## Other known gaps
 
-- **CI:** the workflows in `.github/workflows` have not run yet. That includes the native arm64 job and the nightly statistics and fuzzing jobs.
-- **Project:** choose a license; review the RFC 6330 IPR disclosures; report the xssnick P1 deviation upstream (see the README).
+- **CI:** the main workflow runs on every push to the private repository github.com/mstephenholl/graptor-q, including the native arm64 job. The weekly statistics and fuzzing workflow has not run yet; it can be started by hand.
+- **Project:** a license (none for now, by decision); review the RFC 6330 IPR disclosures; report the xssnick P1 deviation and raptorgo's Go 1.27 SIMD build failure upstream.
