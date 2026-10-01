@@ -93,7 +93,7 @@ bench:
 	go test -run xxx -bench . ./internal/gf256/ ./internal/solver/
 
 # Single-core comparison with the Go libraries of interop/ and cberner (Rust)
-# on CPU $(CPU), as reported in the README (median of the 5 runs of each
+# on CPU $(CPU), as reported in docs/performance.md (median of the 5 runs of each
 # benchmark). The Go benchmarks run twice: with the default build, and with
 # GOEXPERIMENT=simd GOAMD64=v3 (for every library), which enables the SIMD
 # kernels of takeyourhatoff/raptorq; raptorgo's need Go 1.26 and are left out
