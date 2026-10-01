@@ -387,6 +387,37 @@ func TestDecodePathsAgree(t *testing.T) {
 	lowLossMode = 0
 }
 
+func TestDecodeUnusedHDPCRows(t *testing.T) {
+	rng := rand.New(rand.NewPCG(55, 56))
+	lowLossMode = -1
+	defer func() { lowLossMode = 0 }()
+	for trial := range 50 {
+		K, T := 1+rng.IntN(1500), 1+rng.IntN(64)
+		data := make([]byte, K*T-rng.IntN(T))
+		for i := range data {
+			data[i] = byte(rng.Uint32())
+		}
+		enc, _ := NewBlockEncoder(data, T)
+		dec, _ := NewBlockDecoder(len(data), T)
+		loss := rng.Float64() * 0.5
+		for i := range K {
+			if rng.Float64() >= loss {
+				sendSymbol(t, enc, dec, uint32(i))
+			}
+		}
+		extra := dec.p.H + 20 + rng.IntN(300)
+		for esi := uint32(K); dec.Received() < K+extra; esi++ {
+			sendSymbol(t, enc, dec, esi)
+		}
+		if err := dec.Decode(); err != nil {
+			t.Fatalf("trial %d K=%d: %v", trial, K, err)
+		}
+		if got, _ := dec.AppendSource(nil); !bytes.Equal(got, data) {
+			t.Fatalf("trial %d K=%d T=%d: wrong data", trial, K, T)
+		}
+	}
+}
+
 // After warm-up, decoding again after Reset must not allocate, on both
 // decoding paths (with a single goroutine).
 func TestDecodeNoAlloc(t *testing.T) {
