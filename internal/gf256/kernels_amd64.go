@@ -38,6 +38,9 @@ func xorNAVX2(dst *byte, srcs *[8]*byte, nsrc int, n int, acc bool)
 func hdpcStepAVX2(z, y, h1, h2 *byte, n int)
 
 //go:noescape
+func hdpcStepBitsAVX2(z *byte, x *uint64, h1, h2 *byte, n int)
+
+//go:noescape
 func mulGFNI(dst, src []byte, m uint64)
 
 //go:noescape
@@ -203,6 +206,22 @@ func hdpcStep(z, y, h1, h2 []byte) {
 	}
 	if n < len(z) {
 		hdpcStepGeneric(z[n:], y[n:], h1[n:], h2[n:])
+	}
+}
+
+// hdpcStepBits expands the bitset in registers on the AVX2 tiers; the others
+// expand it into memory for hdpcStep.
+func hdpcStepBits(z []byte, x []uint64, h1, h2 []byte) {
+	n := 0
+	switch active {
+	case &genericKernels, &ssse3Kernels:
+	default:
+		if n = len(z) &^ 31; n > 0 {
+			hdpcStepBitsAVX2(&z[0], &x[0], &h1[0], &h2[0], n)
+		}
+	}
+	if n < len(z) {
+		hdpcStepBitsSpread(z[n:], x, n, h1[n:], h2[n:])
 	}
 }
 

@@ -51,6 +51,31 @@ func hdpcStepGeneric(z, y, h1, h2 []byte) {
 	}
 }
 
+// spreadBits[b] has byte i equal to bit i of b.
+var spreadBits = func() (t [256]uint64) {
+	for b := range t {
+		for i := range 8 {
+			t[b] |= uint64(b>>i&1) << (8 * i)
+		}
+	}
+	return
+}()
+
+// hdpcStepBitsSpread is hdpcStepBits for any tier: it expands the bits of x
+// from bit off (a multiple of 8) into bytes, a chunk at a time, and runs
+// hdpcStep on each chunk.
+func hdpcStepBitsSpread(z []byte, x []uint64, off int, h1, h2 []byte) {
+	var y [256]byte
+	for i := 0; i < len(z); i += len(y) {
+		n := min(len(y), len(z)-i)
+		for k := 0; k < n; k += 8 {
+			b := (off + i + k) >> 3 // byte of the bitset
+			binary.LittleEndian.PutUint64(y[k:], spreadBits[byte(x[b>>3]>>(8*(b&7)))])
+		}
+		hdpcStep(z[i:i+n], y[:n], h1[i:i+n], h2[i:i+n])
+	}
+}
+
 func xorGeneric(dst, src []byte) {
 	dst = dst[:len(src)]
 	for len(src) >= 32 {

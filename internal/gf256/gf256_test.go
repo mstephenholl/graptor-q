@@ -308,6 +308,55 @@ func TestHDPCStep(t *testing.T) {
 	})
 }
 
+// HDPCStepBits must equal HDPCStep with the bitset expanded into bytes,
+// ignoring bits beyond the vector, on every tier, for unaligned vectors and
+// with h1 and h2 aliased.
+func TestHDPCStepBits(t *testing.T) {
+	forEachTier(t, func(t *testing.T) {
+		rng := rand.New(rand.NewPCG(21, 22))
+		random := func(n, off int) []byte {
+			b := make([]byte, n+off)
+			for i := range b {
+				b[i] = byte(rng.Uint32())
+			}
+			return b[off:]
+		}
+		for _, n := range testLengths {
+			for _, alias := range []bool{false, true} {
+				off := rng.IntN(2)
+				z, h1, h2 := random(n, off), random(n, off), random(n, off)
+				if alias {
+					h2 = h1
+				}
+				x := make([]uint64, (n+63)/64)
+				for i := range x {
+					x[i] = rng.Uint64()
+				}
+				y := make([]byte, n)
+				for i := range y {
+					y[i] = byte(x[i/64] >> (i % 64) & 1)
+				}
+				wz, wh1, wh2 := bytes.Clone(z), bytes.Clone(h1), bytes.Clone(h2)
+				if alias {
+					wh2 = wh1
+				}
+				HDPCStep(wz, y, wh1, wh2)
+				HDPCStepBits(z, x, h1, h2)
+				if !bytes.Equal(z, wz) || !bytes.Equal(h1, wh1) || !bytes.Equal(h2, wh2) {
+					t.Fatalf("n=%d alias=%v offset=%d: mismatch", n, alias, off)
+				}
+			}
+		}
+	})
+	defer func() {
+		if recover() == nil {
+			t.Error("a short bitset did not panic")
+		}
+	}()
+	z := make([]byte, 65)
+	HDPCStepBits(z, make([]uint64, 1), z, z)
+}
+
 func TestXorGather(t *testing.T) {
 	forEachTier(t, func(t *testing.T) {
 		rng := rand.New(rand.NewPCG(19, 20))

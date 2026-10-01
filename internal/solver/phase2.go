@@ -1,7 +1,6 @@
 package solver
 
 import (
-	"encoding/binary"
 	"math/bits"
 	"slices"
 
@@ -45,6 +44,7 @@ type phase2 struct {
 	pivBits, candBits  []uint64 // U parts of the pivot and candidate rows
 	hd                 [][]byte // reduced HDPC rows
 	hdBytes            []byte
+	unitBits           []uint64 // X_j of a column in U
 	unproc, order, def []int32
 	// pending forward-elimination sources of each binary row, as linked
 	// lists: pendHead[row], then pendNext[entry] (-1 ends); pendSrc[entry]
@@ -256,10 +256,8 @@ func (p2 *phase2) hdpcRows(ph *phase1) {
 	pairs := hdpcPairs(p)
 	pivBits, words := p2.pivBits, p2.words
 
-	// Rows of u coefficients: the H HDPC rows, z, and x_j (padded to whole
-	// bitset words so that a bitset spreads into it without bounds checks).
-	xlen := words * 64
-	buf := zeroed(p2.hdBytes, (H+1)*u+xlen)
+	// Rows of u coefficients: the H HDPC rows and z.
+	buf := zeroed(p2.hdBytes, (H+1)*u)
 	p2.hdBytes = buf
 	hd := resize(p2.hd, H)
 	p2.hd = hd
@@ -267,44 +265,33 @@ func (p2 *phase2) hdpcRows(ph *phase1) {
 		hd[h] = buf[h*u : (h+1)*u : (h+1)*u]
 	}
 	z := buf[H*u : (H+1)*u]
-	x := buf[(H+1)*u:]
-	setX := func(j int) {
+	unit := resize(p2.unitBits, words)
+	p2.unitBits = unit
+	// X returns X_j as a bitset of u bits.
+	X := func(j int) []uint64 {
 		if q := int(ph.colPiv[j]); q >= 0 {
-			// Bit k of the pivot's bitset becomes byte k of x.
-			for i, w := range pivBits[q*words : (q+1)*words] {
-				xw := x[i*64 : i*64+64]
-				for t := range 8 {
-					binary.LittleEndian.PutUint64(xw[t*8:], spreadBits[byte(w>>(8*t))])
-				}
-			}
-		} else {
-			clear(x)
-			x[ph.uIdx[j]] = 1
+			return pivBits[q*words : (q+1)*words]
 		}
+		clear(unit)
+		k := ph.uIdx[j]
+		unit[k>>6] = 1 << (k & 63)
+		return unit
 	}
 	for j := range n - 1 {
-		setX(j)
-		gf256.HDPCStep(z, x[:u], hd[pairs.r1[j]], hd[pairs.r2[j]])
+		gf256.HDPCStepBits(z, X(j), hd[pairs.r1[j]], hd[pairs.r2[j]])
 	}
 	// The last column: z = alpha*z + X_{n-1}, and MT holds alpha^h in row h.
-	setX(n - 1)
 	gf256.MulSlice(z, z, 2)
-	gf256.AddSlice(z, x[:u])
+	for i, w := range X(n - 1) {
+		for ; w != 0; w &= w - 1 {
+			z[i<<6+bits.TrailingZeros64(w)] ^= 1
+		}
+	}
 	for h := range H {
 		gf256.MulAddSlice(hd[h], z, gf256.Exp(h))
 		hd[h][ph.uIdx[n+h]] ^= 1
 	}
 }
-
-// spreadBits[b] has byte i equal to bit i of b.
-var spreadBits = func() (t [256]uint64) {
-	for b := range t {
-		for i := range 8 {
-			t[b] |= uint64(b>>i&1) << (8 * i)
-		}
-	}
-	return
-}()
 
 func xorWords(dst, src []uint64) {
 	src = src[:len(dst)]

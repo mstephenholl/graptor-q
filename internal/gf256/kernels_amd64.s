@@ -362,6 +362,62 @@ hdloop:
 	VZEROUPPER
 	RET
 
+// Byte k of bitSpread is k/8, of bitMask 1<<(k%8): with the 4 bytes of a
+// bitset broadcast to every dword, VPSHUFB (within 128-bit lanes) puts
+// bitset byte k/8 in byte k, and masking isolates bit k.
+DATA bitSpread<>+0(SB)/8, $0x0000000000000000
+DATA bitSpread<>+8(SB)/8, $0x0101010101010101
+DATA bitSpread<>+16(SB)/8, $0x0202020202020202
+DATA bitSpread<>+24(SB)/8, $0x0303030303030303
+GLOBL bitSpread<>(SB), RODATA|NOPTR, $32
+
+DATA bitMask<>+0(SB)/8, $0x8040201008040201
+DATA bitMask<>+8(SB)/8, $0x8040201008040201
+DATA bitMask<>+16(SB)/8, $0x8040201008040201
+DATA bitMask<>+24(SB)/8, $0x8040201008040201
+GLOBL bitMask<>(SB), RODATA|NOPTR, $32
+
+// func hdpcStepBitsAVX2(z *byte, x *uint64, h1, h2 *byte, n int)
+// hdpcStepAVX2 with y given as a bitset: byte k of y is bit k of x. The
+// bits are expanded in registers, 32 at a time.
+TEXT ·hdpcStepBitsAVX2(SB), NOSPLIT, $0-40
+	MOVQ         z+0(FP), DI
+	MOVQ         x+8(FP), SI
+	MOVQ         h1+16(FP), R8
+	MOVQ         h2+24(FP), R9
+	MOVQ         n+32(FP), CX
+	MOVQ         $0x1d, AX
+	VMOVQ        AX, X7
+	VPBROADCASTB X7, Y7
+	VPXOR        Y6, Y6, Y6
+	VMOVDQU      bitSpread<>(SB), Y5
+	VMOVDQU      bitMask<>(SB), Y4
+	XORQ         BX, BX
+
+hdbloop:
+	VPBROADCASTD (SI), Y1
+	VPSHUFB      Y5, Y1, Y1
+	VPAND        Y4, Y1, Y1
+	VPCMPEQB     Y4, Y1, Y1
+	VPABSB       Y1, Y1
+	VMOVDQU      (DI)(BX*1), Y0
+	VPCMPGTB     Y0, Y6, Y2
+	VPADDB       Y0, Y0, Y0
+	VPAND        Y7, Y2, Y2
+	VPXOR        Y2, Y0, Y0
+	VPXOR        Y1, Y0, Y0
+	VMOVDQU      Y0, (DI)(BX*1)
+	VPXOR        (R8)(BX*1), Y0, Y2
+	VMOVDQU      Y2, (R8)(BX*1)
+	VPXOR        (R9)(BX*1), Y0, Y3
+	VMOVDQU      Y3, (R9)(BX*1)
+	ADDQ         $4, SI
+	ADDQ         $32, BX
+	CMPQ         BX, CX
+	JB           hdbloop
+	VZEROUPPER
+	RET
+
 // SSSE3 tier (for CPUs without AVX2), 16 bytes per register. Legacy SSE
 // instructions require aligned memory operands, so every load uses MOVOU.
 // All kernels require n (or len(src)) to be a positive multiple of 16.

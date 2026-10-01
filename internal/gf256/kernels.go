@@ -122,6 +122,17 @@ func HDPCStep(z, y, h1, h2 []byte) {
 	hdpcStep(z, y, h1, h2)
 }
 
+// HDPCStepBits is HDPCStep with y given as a bitset: byte k of y is bit k of
+// x, which must hold at least len(z) bits.
+func HDPCStepBits(z []byte, x []uint64, h1, h2 []byte) {
+	checkLen(z, h1)
+	checkLen(z, h2)
+	if len(x)*64 < len(z) {
+		panic("gf256: bitset shorter than the vector")
+	}
+	hdpcStepBits(z, x, h1, h2)
+}
+
 // XorGather XORs operands gathered from a strided array into dst, reading
 // each operand once. The operands are first (if not nil) and, for each i in
 // idx, base[i*stride : i*stride+len(dst)]. With acc it sets dst ^= the

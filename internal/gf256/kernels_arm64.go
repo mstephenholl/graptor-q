@@ -47,6 +47,8 @@ func hdpcStep(z, y, h1, h2 []byte) {
 	}
 }
 
+func hdpcStepBits(z []byte, x []uint64, h1, h2 []byte) { hdpcStepBitsSpread(z, x, 0, h1, h2) }
+
 // xorN dispatches the fused XOR of up to 8 sources.
 func xorN(dst []byte, srcs [][]byte, acc bool) {
 	if active == &genericKernels {
