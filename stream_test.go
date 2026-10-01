@@ -181,9 +181,7 @@ func TestEncoderReaderAtConcurrent(t *testing.T) {
 	enc, _ := NewEncoderReaderAt(bytes.NewReader(data), oti)
 	var wg sync.WaitGroup
 	for g := range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			r := rand.New(rand.NewPCG(uint64(g), 97))
 			for range 40 {
 				id := PayloadID{uint8(r.IntN(5)), uint32(r.IntN(400))}
@@ -194,7 +192,7 @@ func TestEncoderReaderAtConcurrent(t *testing.T) {
 					return
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }
