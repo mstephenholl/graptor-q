@@ -24,16 +24,14 @@ toolchain, or in Docker when given `ORACLE=docker` (for example
 
 ## Pull requests
 
-Once the rulesets are applied (step 4 of "Going public"), `main` accepts
-changes only through squash-merged pull requests whose required checks pass
-(`.github/rulesets/main.json`):
+`main` accepts changes only through squash-merged pull requests whose
+required checks pass (`.github/rulesets/main.json`):
 
 - `ci`: every job of `ci.yml` passed.
 - `release-plan`: the release labels are valid and high enough for the
   change to the exported API; the job summary shows the version the merge
   will release.
-- `perf`, once it is calibrated (step 7 of "Going public"): the library
-  is not slower than on `main`.
+- `perf`: the library is not slower than on `main`.
 
 The repository owner can bypass every rule: merge without the checks, or
 push to `main` directly.
@@ -93,9 +91,9 @@ once:
 
 | base / head | what it measures | result |
 |---|---|---|
-| `main` / `main`, 3 dispatches | noise of identical builds | TODO |
-| `89a9be9^` / `89a9be9` | a neutral change: a test added to the root package, which moves root-package code only | TODO |
-| `2882e7c` / `2882e7c^` | a known slowdown: reverting the `NewPlan` scratch pool, measured locally at +17.1% (encode-cold, K=100) and +10.8% (K=1000) | TODO |
+| `main` / `main`, 3 dispatches | noise of identical builds | 30 runs: largest median +3.3% (encode, K=50000) |
+| `calib/neutral-base` / `calib/neutral-head` (tags) | a neutral change that moves the kernels: #9's code change, with the loops aligned on both sides | 10 runs: largest median +3.9% (encode, K=50000) |
+| `2882e7c` / `2882e7c^` | a known slowdown: reverting the `NewPlan` scratch pool | flagged in 10 of 10 runs: encode-cold +14.0% (K=100) and +11.0% (K=1000), median of medians |
 
 Dispatch each pair with `gh workflow run perf-calibrate -f base=<base> -f head=<head>`.
 The threshold is the smallest at which none of the neutral runs fails, plus
@@ -103,6 +101,10 @@ one percent, provided the known slowdown is still flagged. If that takes
 more than 10%, raise `-rounds` before requiring the check: a weaker gate
 would miss the known slowdown at K=1000. Repeat the
 calibration when the suite changes or the check raises a false alarm.
+
+On 2026-10-02 the 40 neutral runs saw six CPU models and none failed at 4%
+or more (2 failed at 2%, 1 at 3%), so the threshold is 5%. The known
+slowdown was flagged at every threshold up to 10% and at none at 15%.
 
 The amd64 kernels start every loop at a 64-byte boundary (`PCALIGN $64`).
 Without it, a change anywhere in the binary can move a loop within its cache
@@ -113,36 +115,18 @@ A slowdown smaller than the threshold passes, and several of them add up.
 Compare an older release with `main` from time to time with
 `perf-calibrate.yml` (base = the release tag).
 
-## Going public
+## Repository settings
 
-Rulesets need a public repository on GitHub Free, and the `release` job
-does nothing while the repository is private.
+The repository went public on 2026-10-02, and released v0.1.0. It relies
+on these settings:
 
-Before you start, note that every commit's author email becomes public
-with the repository.
-
-The steps, in order:
-
-1. While the repository is still private, and after the pull request that
-   adds this section, merge the pull request that removes "private" from
-   `README.md` and `ROADMAP.md`. pkg.go.dev keeps
-   the README of every version, and no version is released before step 2.
-2. Make the repository public:
-   `gh repo edit mstephenholl/graptor-q --visibility public --accept-visibility-change-consequences`
-3. Right after, require approval before workflows run for pull requests
-   from outside contributors (the endpoint answers 422 while private):
-   `gh api -X PUT repos/mstephenholl/graptor-q/actions/permissions/fork-pr-contributor-approval -f approval_policy=all_external_contributors`
-4. Create the labels and the rulesets: `.github/rulesets/apply.sh`. It
-   prints the rulesets GitHub stored, and fails unless you can always
-   bypass each of them. If GitHub rejects the `User` bypass entry, delete
-   it from both JSON files and run the script again: the Admin role entry
-   remains.
-5. Release v0.1.0: `gh workflow run ci --ref main`, or merge a pull
-   request. Re-running an older run of `main` releases nothing, because a
-   re-run reuses its event, which says the repository is private.
-6. Calibrate the perf check (above), fill in the table, and set the
-   `-threshold` default of `perfgate verdict` in
-   `internal/cmd/perfgate/main.go` in a pull request.
-7. Require the perf check: add `perf` to the required checks in
-   `.github/rulesets/main.json` in a pull request, merge it, and run
-   `.github/rulesets/apply.sh`.
+- `.github/rulesets/main.json`: pull requests only, squash merges only,
+  the required checks above, no force push or deletion of `main`.
+  `.github/rulesets/release-tags.json`: release tags cannot be moved or
+  deleted. Your account and the Admin role bypass both. After editing
+  either file, run `.github/rulesets/apply.sh` as the owner. It prints the
+  rulesets GitHub stored, and fails unless you can always bypass each.
+- Workflows from pull requests of outside contributors wait for approval
+  (`all_external_contributors`).
+- Merged branches are deleted. A squash commit takes the pull request's
+  title and description.
