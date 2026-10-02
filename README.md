@@ -167,3 +167,7 @@ and the main make targets, and [ROADMAP.md](ROADMAP.md) lists planned work.
 
 RFC 6330 has intellectual property disclosures on file with the IETF,
 including from Qualcomm. Review them before you deploy.
+
+## License
+
+graptor-q is released under the MIT License. See [LICENSE](LICENSE).

@@ -118,9 +118,8 @@ Compare an older release with `main` from time to time with
 Rulesets need a public repository on GitHub Free, and the `release` job
 does nothing while the repository is private.
 
-Before you start, decide on a license. Without one, pkg.go.dev shows no
-documentation for any version, and nobody else has the right to use the
-code. Every commit's author email also becomes public.
+Before you start, note that every commit's author email becomes public
+with the repository.
 
 The steps, in order:
 
