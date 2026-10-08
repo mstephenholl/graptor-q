@@ -5,6 +5,7 @@
 | Path | Contents |
 |---|---|
 | `*.go` | Public API: OTI, Payload ID, §4.3 derivation, layout, block and object encoders and decoders, plan cache |
+| `gf256` | Public GF(256) arithmetic and slice kernels, a thin layer over `internal/gf256` |
 | `internal/gf256` | GF(256) arithmetic and kernels (generic, SSSE3, AVX2, GFNI, NEON) |
 | `internal/rfc` | Table 2, Rand, Deg, Tuple, row patterns. `gentables` generates `tables_gen.go` from the RFC text |
 | `internal/solver` | Symbolic inactivation decoding, the plan, and the §5.8 statistics test |

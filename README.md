@@ -93,6 +93,7 @@ encoding a single block (`ExampleBlockEncoder`).
 | Send an object as packets that any RFC 6330 receiver can decode | `DeriveOTI`, `NewEncoder` and `NewDecoder` |
 | Send a file larger than memory | `NewEncoderReaderAt` and `NewDecoderWriterAt` |
 | Protect one block of data inside your own packet format | `NewBlockEncoder` and `NewBlockDecoder` |
+| Multiply symbols in GF(256) for a code of your own, such as Reed-Solomon over the same polynomial | the `gf256` package: `MulAddSlice`, `MulSlice`, `AddSlice` |
 
 The streaming constructors take an `io.ReaderAt` and an `io.WriterAt`, such
 as an `*os.File`. The encoder reads one source block at a time, and the
