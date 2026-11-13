@@ -1,4 +1,4 @@
-//go:build purego || !(amd64 || arm64)
+//go:build purego || !(amd64 || arm64 || arm)
 
 package gf256
 

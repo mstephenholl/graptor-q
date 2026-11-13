@@ -40,6 +40,8 @@ jobs:
       - run: make test-purego
       - run: make test-race
       - run: make test-tiers
+      # check-generate assembles the NEON words of kernels_arm.s.
+      - run: sudo apt-get update && sudo apt-get install -y binutils-arm-linux-gnueabihf
       - run: make check-generate
 
   lint:

@@ -1,5 +1,7 @@
 package gf256
 
+//go:generate go run ./armwords kernels_arm.s
+
 import (
 	"fmt"
 	"os"

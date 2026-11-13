@@ -64,12 +64,15 @@ lint:
 	golangci-lint run --build-tags purego ./...
 	cd interop && golangci-lint run --config ../.golangci.yml ./...
 
-# Regenerate internal/rfc/tables_gen.go from the RFC text.
+# Regenerate internal/rfc/tables_gen.go from the RFC text, and the NEON
+# instruction words of internal/gf256/kernels_arm.s with the GNU assembler
+# (arm-linux-gnueabihf-as, from binutils-arm-linux-gnueabihf).
 generate:
 	cd internal/rfc && go generate
+	cd internal/gf256 && go generate
 
 check-generate: generate
-	git diff --exit-code internal/rfc/tables_gen.go
+	git diff --exit-code internal/rfc/tables_gen.go internal/gf256/kernels_arm.s
 
 # cberner/raptorq 2.0.1 oracle, built with the local Rust toolchain.
 oracle:
