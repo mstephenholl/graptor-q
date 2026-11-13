@@ -12,3 +12,10 @@ var X86 struct {
 	HasAVX2  bool // AVX2 with OS support for YMM state
 	HasGFNI  bool // GFNI (usable with VEX-encoded YMM operands when HasAVX2)
 }
+
+// ARM holds the 32-bit ARM features relevant to graptorq. They are read from
+// the auxiliary vector on Linux. All fields are false on other operating
+// systems and architectures and when built with the purego tag.
+var ARM struct {
+	HasNEON bool // Advanced SIMD (NEON), which ARMv7 leaves optional
+}
