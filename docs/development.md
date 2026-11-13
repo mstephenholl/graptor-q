@@ -6,7 +6,7 @@
 |---|---|
 | `*.go` | Public API: OTI, Payload ID, §4.3 derivation, layout, block and object encoders and decoders, plan cache |
 | `gf256` | Public GF(256) arithmetic and slice kernels, a thin layer over `internal/gf256` |
-| `internal/gf256` | GF(256) arithmetic and kernels (generic, SSSE3, AVX2, GFNI, NEON) |
+| `internal/gf256` | GF(256) arithmetic and kernels (generic, SSSE3, AVX2, GFNI, NEON). `armwords` assembles the NEON words of `kernels_arm.s` |
 | `internal/rfc` | Table 2, Rand, Deg, Tuple, row patterns. `gentables` generates `tables_gen.go` from the RFC text |
 | `internal/solver` | Symbolic inactivation decoding, the plan, and the §5.8 statistics test |
 | `internal/refsolve` | Dense reference implementation (test oracle only) |
@@ -18,10 +18,13 @@
 ## Make targets
 
 The main make targets are `test`, `test-purego`, `test-race`, `test-cross`
-(arm64, s390x, riscv64, 386), `lint` (golangci-lint v2.14), `interop`, `oracle-vectors`,
-`bench-compare`, `stat-long`, and `fuzz`. The targets that need the oracle build it with the local Rust
-toolchain, or in Docker when given `ORACLE=docker` (for example
-`make interop ORACLE=docker`).
+(arm64, 32-bit ARM with and without NEON, s390x, riscv64, 386), `lint`
+(golangci-lint v2.14), `interop`, `oracle-vectors`, `bench-compare`,
+`stat-long`, and `fuzz`. `generate` and `check-generate` need
+`arm-linux-gnueabihf-as` (package `binutils-arm-linux-gnueabihf` on Debian and
+Ubuntu). The targets that need the oracle build it with the local Rust
+toolchain, or in Docker when given `ORACLE=docker` (for example `make interop
+ORACLE=docker`).
 
 ## Pull requests
 

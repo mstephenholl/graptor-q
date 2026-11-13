@@ -7,7 +7,8 @@
 // functions as they are.
 //
 // The slice kernels use the fastest tier this CPU supports, chosen once at
-// startup: GFNI, AVX2 or SSSE3 on amd64, NEON on arm64, and portable Go
+// startup: GFNI, AVX2 or SSSE3 on amd64, NEON on arm64, NEON for AddSlice and
+// MulAddSlice on 32-bit ARM CPUs that report it to Linux, and portable Go
 // elsewhere or when built with the purego tag. The environment variable
 // GRAPTORQ_GF256 names a tier to use instead, for example generic.
 package gf256
