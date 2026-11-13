@@ -10,7 +10,7 @@ symbols that arrive, and from K+2 with a probability above 99.9999%.
 graptor-q implements the whole RFC, including the object-delivery layer, so
 it interoperates with other RFC 6330 implementations. It has no
 dependencies outside the standard library, and it uses SIMD kernels on
-amd64 and arm64.
+amd64 and arm64, and for XOR and multiply-add on 32-bit ARM with NEON.
 
 ## Install
 

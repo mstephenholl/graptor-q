@@ -45,13 +45,14 @@ GF(256) symbol arithmetic runs in one of these tiers.
 | AVX2 (`VPSHUFB` nibble tables) | amd64 with AVX2 | 45 GB/s |
 | SSSE3 (`PSHUFB` nibble tables) | amd64 with SSSE3 but no AVX2 | 27 GB/s |
 | NEON (`TBL` nibble tables) | arm64 | not measured |
+| NEON (`VTBL.8` nibble tables), XOR and multiply-add only | 32-bit ARM whose CPU reports NEON to Linux | not measured |
 | Generic Go | any CPU, or forced with `-tags purego` | 3 GB/s |
 
 The library picks the best supported tier at startup. `GRAPTORQ_GF256=<tier>` forces a tier for testing, and `make test-tiers` runs the suite on each one.
 
 The GFNI tier cannot use `GF2P8MULB`, because that instruction hard-codes the AES polynomial 0x11B and RFC 6330 uses 0x11D.
 
-The library detects CPU features with CPUID directly, because `x/sys/cpu` cannot report GFNI without AVX-512.
+The library detects CPU features with CPUID directly, because `x/sys/cpu` cannot report GFNI without AVX-512. On 32-bit ARM it reads `HWCAP_NEON` from the auxiliary vector, because ARMv7 does not require NEON.
 
 ## How the solver saves time
 
