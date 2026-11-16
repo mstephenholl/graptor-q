@@ -150,6 +150,7 @@ func TestKernels(t *testing.T) {
 	forEachTier(t, func(t *testing.T) {
 		rng := rand.New(rand.NewPCG(1, 2))
 		buf := make([]byte, 3*(65536+64))
+		before := make([]byte, len(buf))
 		for _, n := range testLengths {
 			for _, c := range []byte{0, 1, 2, 3, 0x1d, 0x80, 0xfe, 0xff, byte(rng.IntN(256))} {
 				off := rng.IntN(32)
@@ -157,14 +158,19 @@ func TestKernels(t *testing.T) {
 					buf[i] = byte(rng.Uint32())
 				}
 				src := buf[off : off+n]
-				dst := buf[len(buf)/2+off/2 : len(buf)/2+off/2+n]
+				lo := len(buf)/2 + off/2
+				dst := buf[lo : lo+n]
 				orig := bytes.Clone(dst)
+				copy(before, buf)
 
 				want := bytes.Clone(orig)
 				refMulAdd(want, src, c)
 				MulAddSlice(dst, src, c)
 				if !bytes.Equal(dst, want) {
 					t.Fatalf("MulAddSlice n=%d c=%d off=%d mismatch", n, c, off)
+				}
+				if !bytes.Equal(buf[:lo], before[:lo]) || !bytes.Equal(buf[lo+n:], before[lo+n:]) {
+					t.Fatalf("MulAddSlice n=%d c=%d off=%d changed bytes outside dst", n, c, off)
 				}
 
 				copy(dst, orig)
